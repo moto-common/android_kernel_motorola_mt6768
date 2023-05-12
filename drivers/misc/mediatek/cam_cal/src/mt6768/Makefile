@@ -1,15 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 
 MTK_CUSTOM_PATH := $(srctree)/drivers/misc/mediatek
-MTK_PLATFORM := $(subst ",,$(CONFIG_MTK_PLATFORM))
 CAM_CAL_SRC_PATH := $(MTK_CUSTOM_PATH)/cam_cal/src
 CAM_CAL_PLATFORM_SRC_PATH := $(CAM_CAL_SRC_PATH)/$(MTK_PLATFORM)
-ifeq ($(CONFIG_ARCH_MOTO_PROJECT),)
-ARCH_MTK_PROJECT := $(subst ",,$(CONFIG_ARCH_MTK_PROJECT))
-else
 ARCH_MTK_PROJECT := $(subst ",,$(CONFIG_ARCH_MOTO_PROJECT))
 ccflags-y += -D$(MTK_PLATFORM) -D$(ARCH_MTK_PROJECT)
-endif
 COMMON_VERSION := v1
 
 subdir-ccflags-y += -I$(MTK_CUSTOM_PATH)/imgsensor/inc \
@@ -40,28 +35,28 @@ CUSTOM_SRC_LIST := cam_cal_list eeprom_i2c_dev
 
 # filter Coful and corfu
 sources := corfu_g corfu_factory
-ifneq ($(filter $(TARGET_PRODUCT),$(sources)),)
+ifeq ($(ARCH_MTK_PROJECT),corfu)
 $(warning this is corfu  CAMERA OTP .....)
 CUSTOM_SRC_LIST := cam_cal_list eeprom_i2c_dev custom_eeprom_driver eeprom_i2c_mot_corfu_gc02m1_tsp
 subdir-ccflags-y += -DMOT_MT6768_COFUL
 endif
 
 sources := coful_g coful_factory
-ifneq ($(filter $(TARGET_PRODUCT),$(sources)),)
+ifeq ($(ARCH_MTK_PROJECT),coful)
 $(warning this is coful CAMERA OTP .....)
 CUSTOM_SRC_LIST := cam_cal_list eeprom_i2c_dev custom_eeprom_driver eeprom_i2c_mot_coful_gc02m1_tsp
 subdir-ccflags-y += -DMOT_MT6768_COFUL
 endif
 
 sources := cofud_g cofud_l cofud_factory
-ifneq ($(filter $(TARGET_PRODUCT),$(sources)),)
+ifeq ($(ARCH_MTK_PROJECT),cofud)
 $(warning this is cofud CAMERA OTP .....)
 CUSTOM_SRC_LIST := cam_cal_list eeprom_i2c_dev custom_eeprom_driver eeprom_i2c_mot_coful_gc02m1_tsp
 subdir-ccflags-y += -DMOT_MT6768_COFUL
 endif
 
 sources := milan_g milan_factory
-ifneq ($(filter $(TARGET_PRODUCT),$(sources)),)
+ifeq ($(ARCH_MTK_PROJECT),milan)
 $(warning this is milan CAMERA OTP .....)
 CUSTOM_SRC_LIST := cam_cal_list eeprom_i2c_dev custom_eeprom_driver
 subdir-ccflags-y += -DMOT_MT6768_COFUL
