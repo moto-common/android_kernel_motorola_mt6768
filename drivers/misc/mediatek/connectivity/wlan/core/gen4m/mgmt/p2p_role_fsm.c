@@ -1435,6 +1435,13 @@ void p2pRoleFsmRunEventStartAP(IN struct ADAPTER *prAdapter,
 #endif
 	}
 
+	/* Clear current AP's STA_RECORD_T and current AID to prevent
+	 * using previous p2p connection state. This is needed because
+	 * upper layer may add keys before we start SAP/GO.
+	 */
+	prP2pBssInfo->prStaRecOfAP = (struct STA_RECORD *) NULL;
+	prP2pBssInfo->u2AssocId = 0;
+
 	/* Clear list to ensure no client staRec */
 	if (bssGetClientCount(prAdapter, prP2pBssInfo) != 0) {
 		DBGLOG(P2P, WARN,
@@ -1644,6 +1651,7 @@ void p2pRoleFsmRunEventDelIface(IN struct ADAPTER *prAdapter,
 
 		nicDeactivateNetwork(prAdapter, prP2pRoleFsmInfo->ucBssIndex);
 		nicUpdateBss(prAdapter, prP2pRoleFsmInfo->ucBssIndex);
+		prP2pBssInfo->eCurrentOPMode = OP_MODE_INFRASTRUCTURE;
 	}
 
 error:
@@ -4521,7 +4529,13 @@ u_int8_t indicateApAcsOverwrite(
 			ucPrimaryCh = prAdapter->rWifiVar.ucApAcsChannel[0];
 			eChnlBw = prAdapter->rWifiVar.ucAp2gBandwidth;
 		} else if (p2pFuncIsDualAPMode(prAdapter)) {
-			ucPrimaryCh = AP_DEFAULT_CHANNEL_2G;
+			struct BSS_INFO *bss =
+				aisGetConnectedBssInfo(prAdapter);
+
+			if (!bss)
+				ucPrimaryCh = AP_DEFAULT_CHANNEL_2G;
+			else if (bss->eBand == BAND_2G4)
+				ucPrimaryCh = bss->ucPrimaryChannel;
 			eChnlBw = prAdapter->rWifiVar.ucAp2gBandwidth;
 		}
 	} else if ((eBand == BAND_5G) &&
@@ -4614,25 +4628,43 @@ void p2pRoleFsmRunEventAcs(IN struct ADAPTER *prAdapter,
 		}
 	}
 
-
 	if (prAcsReqInfo->eHwMode == P2P_VENDOR_ACS_HW_MODE_11ANY) {
 		struct BSS_INFO *prAisBssInfo;
 
 		prAisBssInfo = aisGetAisBssInfo(prAdapter,
 			AIS_DEFAULT_INDEX);
-		if (prAisBssInfo->eConnectionState == MEDIA_STATE_CONNECTED) {
-			/* Force SCC, indicate channel directly */
-			indicateAcsResultByAisCh(prAdapter, prAcsReqInfo,
-				prAisBssInfo);
-			goto exit;
+		if (prAisBssInfo->eConnectionState == MEDIA_STATE_CONNECTED &&
+			// BEGIN MOTO IKSWT-58657
+			/* Only start AP in SCC mode when STA is not working in the 2GHz */
+			((!p2pFuncIsDualAPMode(prAdapter) &&
+			prAisBssInfo->eBand > BAND_2G4) ||
+			// END MOTO IKSWT-58657
+			(p2pFuncIsDualAPMode(prAdapter) &&
+			prAisBssInfo->eBand > BAND_2G4))) {
+			// BEGIN MOTO IKSWT-58657
+			/* If STA is working in the 5GHz DFS frequency, run ACS in the 2GHz */
+			if (rlmDomainIsDfsChnls(prAdapter, prAisBssInfo->ucPrimaryChannel)) {
+				trimAcsScanList(prAdapter, prMsgAcsRequest,
+					prAcsReqInfo, BIT(BAND_2G4));
+				prAcsReqInfo->eHwMode = P2P_VENDOR_ACS_HW_MODE_11G;
+			} else {
+				/* Force SCC, indicate channel directly */
+				indicateAcsResultByAisCh(prAdapter, prAcsReqInfo,
+					prAisBssInfo);
+				goto exit;
+			}
+			// END MOTO IKSWT-58657
+		// Begin Motorola, bccunha, IKSWS-77084, Fix MHS channels while on APM
 #if (CFG_SUPPORT_WIFI_6G == 1)
-		} else if (prAdapter->fgIsHwSupport6G) {
+		} else if (prAdapter->fgIsHwSupport6G &&
+		    prAcsReqInfo->ucBand & BIT(BAND_6G)) {
 			/* Trim 5G + 6G PSC channels */
 			trimAcsScanList(prAdapter, prMsgAcsRequest,
 				prAcsReqInfo, BIT(BAND_6G) | BIT(BAND_5G));
 			prAcsReqInfo->eHwMode = P2P_VENDOR_ACS_HW_MODE_11A;
 #endif
-		} else if (prAdapter->fgEnable5GBand) {
+		} else if (prAdapter->fgEnable5GBand &&
+		    prAcsReqInfo->ucBand & BIT(BAND_5G)) {
 			/* Trim 5G channels */
 			trimAcsScanList(prAdapter, prMsgAcsRequest,
 				prAcsReqInfo, BIT(BAND_5G));
@@ -4656,6 +4688,8 @@ void p2pRoleFsmRunEventAcs(IN struct ADAPTER *prAdapter,
 				prAcsReqInfo, BIT(BAND_5G));
 		}
 	}
+	DBGLOG(P2P, INFO, "eHwMode set to %d\n", (int) prAcsReqInfo->eHwMode);
+	// End IKSWS-77084
 
 	initAcsChnlMask(prAdapter, prMsgAcsRequest, prAcsReqInfo);
 

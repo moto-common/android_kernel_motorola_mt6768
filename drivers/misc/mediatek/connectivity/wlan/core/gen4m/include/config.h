@@ -936,6 +936,8 @@
 
 #define CFG_SUPPORT_P2P_RSSI_QUERY		0
 
+#define CFG_SUPPORT_RSSI_DISCONNECT    1
+
 #define CFG_SUPPORT_P2P_GO_OFFLOAD_PROBE_RSP	0
 
 #define CFG_SHOW_MACADDR_SOURCE			1
@@ -1063,7 +1065,7 @@
  * Flags of SDIO test pattern support
  *------------------------------------------------------------------------------
  */
-#define CFG_SUPPORT_SDIO_READ_WRITE_PATTERN 1
+#define CFG_SUPPORT_SDIO_READ_WRITE_PATTERN 0
 
 /*------------------------------------------------------------------------------
  * Flags of Workaround
@@ -1089,6 +1091,7 @@
 
 #define CFG_SUPPORT_LLS 1
 
+#define CFG_REPORT_TX_RATE_FROM_LLS 0
 /*------------------------------------------------------------------------------
  * Flags for prepare the FW compile flag
  *------------------------------------------------------------------------------
@@ -1112,7 +1115,7 @@
 #define SCHED_SCAN_CMD_VERSION             (1)
 
 /* this value should be aligned to auSsid in struct CMD_SCHED_SCAN_REQ */
-#define CFG_SCAN_HIDDEN_SSID_MAX_NUM       (10)
+#define CFG_SCAN_HIDDEN_SSID_MAX_NUM       (16)
 /* this value should be aligned to auMatchSsid in struct CMD_SCHED_SCAN_REQ */
 #define CFG_SCAN_SSID_MATCH_MAX_NUM        (16)
 
@@ -1545,7 +1548,11 @@
  *       COUNTRY_CHANNEL_TXPOWER_LIMIT_TYPE_COMP_11AC_V2
  *------------------------------------------------------------------------------
  */
+#ifdef MOTO_MT6855_DEVONN
+#define CFG_SUPPORT_DYNA_TX_PWR_CTRL_11AC_V2_SETTING 1
+#else
 #define CFG_SUPPORT_DYNA_TX_PWR_CTRL_11AC_V2_SETTING 0
+#endif
 
 /*------------------------------------------------------------------------------
  * tx power control:
@@ -1670,6 +1677,18 @@
 #define CFG_SUPPORT_ANDROID_DUAL_STA 0
 
 #define CFG_SUPPORT_LIMITED_PKT_PID  1
+
+/*------------------------------------------------------------------------------
+ * Flag of Wifi Standalone Log Support.
+ * 1: Enable. Could be supported only if (CFG_MTK_ANDROID_WMT == 1).
+ * 0: Disable.
+ *------------------------------------------------------------------------------
+ */
+#if CFG_MTK_ANDROID_WMT
+#define CFG_SUPPORT_SA_LOG 0
+#else
+#define CFG_SUPPORT_SA_LOG 0
+#endif
 
 /*******************************************************************************
  *                             D A T A   T Y P E S

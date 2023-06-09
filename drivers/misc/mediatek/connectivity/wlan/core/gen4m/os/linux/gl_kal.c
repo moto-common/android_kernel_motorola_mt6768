@@ -106,11 +106,13 @@
 #include <linux/kobject.h>
 
 /* for wifi standalone log */
+#if CFG_SUPPORT_SA_LOG
 #define CREATE_TRACE_POINTS
 #include "mtk_wifi_trace.h"
 #include <linux/jiffies.h>
 #include <linux/ratelimit.h>
 #include <linux/rtc.h>
+#endif
 
 /*******************************************************************************
  *                              C O N S T A N T S
@@ -227,7 +229,10 @@ static struct notifier_block wlan_fb_notifier = {
 
 static struct miscdevice wlan_object;
 
+#if CFG_SUPPORT_SA_LOG
 static unsigned long rtc_update;
+#endif
+
 /*******************************************************************************
  *                                 M A C R O S
  *******************************************************************************
@@ -271,7 +276,7 @@ static uint8_t *apucCr4FwName[] = {
 	NULL
 };
 
-#if !CONFIG_WLAN_DRV_BUILD_IN
+#if (CONFIG_WLAN_DRV_BUILD_IN == 0) && (BUILD_QA_DBG == 1)
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief  To leverage systrace, use the same name, i.e. tracing_mark_write,
@@ -1772,6 +1777,9 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
 				aisGetConnSettings(prAdapter, ucBssIndex);
 			if (eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST) {
 #if KERNEL_VERSION(4, 12, 0) <= CFG80211_VERSION_CODE
+				uint8_t ucAuthorized = pvBuf ?
+					*(uint8_t *) pvBuf : FALSE;
+
 				rRoamInfo.bss = bss;
 				rRoamInfo.req_ie = prConnSettings->aucReqIe;
 				rRoamInfo.req_ie_len =
@@ -1779,11 +1787,16 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
 				rRoamInfo.resp_ie = prConnSettings->aucRspIe;
 				rRoamInfo.resp_ie_len =
 					prConnSettings->u4RspIeLength;
-#if KERNEL_VERSION(4, 19, 0) > CFG80211_VERSION_CODE
-				rRoamInfo.authorized = *(uint8_t *) pvBuf;
+#if KERNEL_VERSION(4, 15, 0) > CFG80211_VERSION_CODE
+				rRoamInfo.authorized = ucAuthorized;
 #endif
 				cfg80211_roamed(prDevHandler,
 					&rRoamInfo, GFP_KERNEL);
+#if KERNEL_VERSION(4, 15, 0) <= CFG80211_VERSION_CODE
+				if (ucAuthorized)
+					cfg80211_port_authorized(prDevHandler,
+						arBssid, GFP_KERNEL);
+#endif
 #else
 				cfg80211_roamed_bss(
 					prDevHandler,
@@ -2432,6 +2445,7 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 	struct mt66xx_chip_info *prChipInfo;
 	uint32_t u4TxHeadRoomSize = 0;
 	struct ADAPTER *prAdapter = NULL;
+	struct BSS_INFO *prBssInfo = NULL;
 
 	ASSERT(prOrgSkb);
 	ASSERT(prGlueInfo);
@@ -2545,6 +2559,14 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 		return WLAN_STATUS_INVALID_PACKET;
 	}
 
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+	if (!prBssInfo) {
+		DBGLOG(INIT, INFO, "prBssInfo NULL for ucBssIndex:%u\n",
+			ucBssIndex);
+		dev_kfree_skb(prSkb);
+		return WLAN_STATUS_INVALID_PACKET;
+	}
+
 #if CFG_SUPPORT_TPENHANCE_MODE
 	if (!wlanTpeProcess(prGlueInfo,
 			prSkb,
@@ -2568,8 +2590,7 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 		[u2QueueIdx]);
 
 	if (GLUE_GET_REF_CNT(prGlueInfo->ai4TxPendingFrameNumPerQueue
-	    [ucBssIndex][u2QueueIdx]) >=
-	    prGlueInfo->prAdapter->rWifiVar.u4NetifStopTh) {
+	    [ucBssIndex][u2QueueIdx]) >= prBssInfo->u4NetifStopTh) {
 		netif_stop_subqueue(prDev, u2QueueIdx);
 
 		DBGLOG(TX, INFO,
@@ -2654,6 +2675,7 @@ void kalSendCompleteAndAwakeQueue(IN struct GLUE_INFO
 	uint16_t u2QueueIdx = 0;
 	uint8_t ucBssIndex = 0;
 	u_int8_t fgIsValidDevice = TRUE;
+	struct BSS_INFO *prBssInfo;
 
 	GLUE_SPIN_LOCK_DECLARATION();
 
@@ -2665,32 +2687,6 @@ void kalSendCompleteAndAwakeQueue(IN struct GLUE_INFO
 	ASSERT(u2QueueIdx < CFG_MAX_TXQ_NUM);
 
 	ucBssIndex = GLUE_GET_PKT_BSS_IDX(pvPacket);
-
-#if 0
-	if ((GLUE_GET_REF_CNT(prGlueInfo->i4TxPendingFrameNum) <=
-	     0)) {
-		uint8_t ucBssIdx;
-		uint16_t u2QIdx;
-
-		DBGLOG(INIT, INFO, "TxPendingFrameNum[%u] CurFrameId[%u]\n",
-		       prGlueInfo->i4TxPendingFrameNum,
-		       GLUE_GET_PKT_ARRIVAL_TIME(pvPacket));
-
-		for (ucBssIdx = 0; ucBssIdx < prAdapter->ucHwBssIdNum;
-		     ucBssIdx++) {
-			for (u2QIdx = 0; u2QIdx < CFG_MAX_TXQ_NUM; u2QIdx++) {
-				DBGLOG(INIT, INFO,
-					"BSS[%u] Q[%u] TxPendingFrameNum[%u]\n",
-					ucBssIdx, u2QIdx,
-					prGlueInfo->ai4TxPendingFrameNumPerQueue
-					[ucBssIdx][u2QIdx]);
-			}
-		}
-	}
-
-	ASSERT((GLUE_GET_REF_CNT(prGlueInfo->i4TxPendingFrameNum) >
-		0));
-#endif
 
 	GLUE_DEC_REF_CNT(prGlueInfo->i4TxPendingFrameNum);
 	GLUE_DEC_REF_CNT(
@@ -2712,9 +2708,9 @@ void kalSendCompleteAndAwakeQueue(IN struct GLUE_INFO
 #if CFG_ENABLE_WIFI_DIRECT
 	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, ucBssIndex);
+
 	{
-		struct BSS_INFO *prBssInfo = GET_BSS_INFO_BY_INDEX(
-					     prGlueInfo->prAdapter, ucBssIndex);
 		struct GL_P2P_INFO *prGlueP2pInfo = (struct GL_P2P_INFO *)
 						    NULL;
 		struct net_device *prNetdevice = NULL;
@@ -2749,12 +2745,9 @@ void kalSendCompleteAndAwakeQueue(IN struct GLUE_INFO
 #endif
 
 	if (fgIsValidDevice == TRUE) {
-		uint32_t u4StartTh =
-			prGlueInfo->prAdapter->rWifiVar.u4NetifStartTh;
-
 		if (netif_subqueue_stopped(prDev, prSkb) &&
 		    prGlueInfo->ai4TxPendingFrameNumPerQueue[ucBssIndex]
-		    [u2QueueIdx] <= u4StartTh) {
+		    [u2QueueIdx] <= prBssInfo->u4NetifStartTh) {
 			netif_wake_subqueue(prDev, u2QueueIdx);
 			DBGLOG(TX, INFO,
 				"WakeUp Queue BSS[%u] QIDX[%u] PKT_LEN[%u] TOT_CNT[%d] PER-Q_CNT[%d]\n",
@@ -4649,7 +4642,9 @@ int main_thread(void *data)
 	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
 	       KAL_GET_CURRENT_THREAD_NAME(), KAL_GET_CURRENT_THREAD_ID());
 
+#if CFG_SUPPORT_SA_LOG
 	rtc_update = jiffies;	/* update rtc_update time base */
+#endif
 
 	while (TRUE) {
 #ifdef UT_TEST_MODE
@@ -8152,9 +8147,14 @@ static uint32_t kalPerMonUpdate(IN struct ADAPTER *prAdapter)
 		if (txDiffBytes[i] < 0 || rxDiffBytes[i] < 0) {
 			/* overflow should not happen */
 			DBGLOG(SW4, WARN,
-				"[%d]wrong bytes: tx[%lu][%lu][%ld], rx[%lu][%lu][%ld],\n",
-				i, currentTxBytes, lastTxBytes, txDiffBytes[i],
-				currentRxBytes, lastRxBytes, rxDiffBytes[i]);
+				"[%d]wrong bytes: tx[%llu][%lld][%lld], rx[%llu][%lld][%lld],\n",
+				i,
+				(unsigned long long) currentTxBytes,
+				(long long) lastTxBytes,
+				(long long) txDiffBytes[i],
+				(unsigned long long) currentRxBytes,
+				(long long) lastRxBytes,
+				(long long) rxDiffBytes[i]);
 			goto fail;
 		}
 
@@ -9813,6 +9813,7 @@ void kalUpdateCompHdlrRec(IN struct ADAPTER *prAdapter,
 					% OID_HDLR_REC_NUM;
 }
 
+#if CFG_SUPPORT_SA_LOG
 void kalPrintUTC(char *msg_buf, int msg_buf_size)
 {
 	int ret = 0;
@@ -9838,7 +9839,7 @@ void kalPrintUTC(char *msg_buf, int msg_buf_size)
 			tm_android.tm_min, tm_android.tm_sec,
 			(unsigned int)(tv_android.tv_nsec/1000));
 		if (ret < 0) {
-			kalPrintLog("[%u] snprintf failed, ret: %d",
+			kalPrintSALog("[%u] snprintf failed, ret: %d",
 				__LINE__, ret);
 		} else {
 			trace_wifi_standalone_log(msg_buf);
@@ -9846,12 +9847,24 @@ void kalPrintUTC(char *msg_buf, int msg_buf_size)
 	}
 }
 
-void kalPrintTrace(char *buffer, const int len)
+void kalPrintSALog(const char *fmt, ...)
 {
-	if (buffer[len - 1] == '\n')
-		buffer[len - 1] = '\0';
+	char buffer[WIFI_LOG_MSG_BUFFER] = {0};
+	int ret = 0;
+	va_list args;
 
-	if (len < WIFI_LOG_MSG_MAX) {
+	va_start(args, fmt);
+	ret = vsnprintf(buffer, WIFI_LOG_MSG_BUFFER, fmt, args);
+	if (ret < 0) {
+		kalPrintSALog("[%u] vsnprintf failed, ret: %d",
+			__LINE__, ret);
+	}
+	va_end(args);
+
+	if (buffer[strlen(buffer) - 1] == '\n')
+		buffer[strlen(buffer) - 1] = '\0';
+
+	if (strlen(buffer) < WIFI_LOG_MSG_MAX) {
 		trace_wifi_standalone_log(buffer);
 	} else {
 		char sub_buffer[WIFI_LOG_MSG_MAX];
@@ -9872,30 +9885,7 @@ void kalPrintTrace(char *buffer, const int len)
 		kalPrintUTC(buffer, WIFI_LOG_MSG_BUFFER);
 	}
 }
-
-void kalPrintLog(const char *fmt, ...)
-{
-	char buffer[WIFI_LOG_MSG_BUFFER];
-	int ret = 0;
-	struct va_format vaf;
-	va_list args;
-
-	va_start(args, fmt);
-	vaf.fmt = fmt;
-	vaf.va = &args;
-	ret = vsnprintf(buffer, sizeof(buffer), fmt, args);
-	if (ret < 0) {
-		kalPrintLog("[%u] vsnprintf failed, ret: %d",
-			__LINE__, ret);
-	} else if (get_wifi_standalone_log_mode() == 1) {
-		kalPrintTrace(buffer, strlen(buffer));
-	} else {
-		pr_info("%s%s", WLAN_TAG, buffer);
-	}
-
-	va_end(args);
-}
-
+#endif /* CFG_SUPPORT_SA_LOG */
 
 #if (CFG_SUPPORT_POWER_THROTTLING == 1)
 void kalPwrLevelHdlrRegister(IN struct ADAPTER *prAdapter,

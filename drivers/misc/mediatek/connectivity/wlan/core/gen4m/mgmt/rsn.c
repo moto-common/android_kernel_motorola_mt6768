@@ -2601,7 +2601,7 @@ uint8_t rsnCheckSaQueryTimeout(
 	GET_CURRENT_SYSTIME(&now);
 
 	if (CHECK_FOR_TIMEOUT(now, prBssSpecInfo->u4SaQueryStart,
-			      TU_TO_MSEC(1000))) {
+			      TU_TO_MSEC(SA_QUERY_RETRY_TIMEOUT))) {
 		DBGLOG(RSN, INFO, "association SA Query timed out\n");
 
 		prBssSpecInfo->ucSaQueryTimedOut = 1;
@@ -2764,6 +2764,13 @@ void rsnStartSaQueryTimer(IN struct ADAPTER *prAdapter,
 
 	u2PayloadLen = 2 + ACTION_SA_QUERY_TR_ID_LEN;
 
+	//BEGIN IKSWR-80158, make sure prStaRecOfAP is not null to avoid kpanic
+	if (!prBssInfo->prStaRecOfAP) {
+		DBGLOG(RSN, ERROR, "prStaRecOfAP is null\n");
+		return;
+	}
+	//END IKSWR-80158
+
 	/* 4 <3> Update information of MSDU_INFO_T */
 	TX_SET_MMPDU(prAdapter,
 		     prMsduInfo,
@@ -2777,11 +2784,10 @@ void rsnStartSaQueryTimer(IN struct ADAPTER *prAdapter,
 	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
 
 	DBGLOG(RSN, INFO, "Set SA Query timer %d (%d Tu)",
-	       prBssSpecInfo->u4SaQueryCount, 201);
+	       prBssSpecInfo->u4SaQueryCount, SA_QUERY_TIMEOUT);
 
 	cnmTimerStartTimer(prAdapter, &prBssSpecInfo->rSaQueryTimer,
-			   TU_TO_MSEC(201));
-
+			   TU_TO_MSEC(SA_QUERY_TIMEOUT));
 }
 
 /*----------------------------------------------------------------------------*/
@@ -2911,6 +2917,13 @@ void rsnSaQueryRequest(IN struct ADAPTER *prAdapter, IN struct SW_RFB *prSwRfb)
 		   ACTION_SA_QUERY_TR_ID_LEN);
 
 	u2PayloadLen = 2 + ACTION_SA_QUERY_TR_ID_LEN;
+
+	//BEGIN IKSWR-80158, make sure prStaRecOfAP is not null to avoid kpanic
+	if (!prBssInfo->prStaRecOfAP) {
+		DBGLOG(RSN, ERROR, "prStaRecOfAP is null\n");
+		return;
+	}
+	//END IKSWR-80158
 
 	/* 4 <3> Update information of MSDU_INFO_T */
 	TX_SET_MMPDU(prAdapter,
@@ -3290,7 +3303,7 @@ uint8_t rsnApCheckSaQueryTimeout(IN struct ADAPTER
 	GET_CURRENT_SYSTIME(&now);
 
 	if (CHECK_FOR_TIMEOUT(now, prStaRec->rPmfCfg.u4SAQueryStart,
-			      TU_TO_MSEC(1000))) {
+			      TU_TO_MSEC(SA_QUERY_RETRY_TIMEOUT))) {
 		DBGLOG(RSN, INFO, "association SA Query timed out\n");
 
 		/* XXX PMF TODO how to report STA REC disconnect?? */
@@ -3425,10 +3438,10 @@ void rsnApStartSaQueryTimer(IN struct ADAPTER *prAdapter,
 	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
 
 	DBGLOG(RSN, INFO, "AP Set SA Query timer %d (%d Tu)\n",
-	       prStaRec->rPmfCfg.u4SAQueryCount, 201);
+	       prStaRec->rPmfCfg.u4SAQueryCount, SA_QUERY_TIMEOUT);
 
 	cnmTimerStartTimer(prAdapter,
-			   &prStaRec->rPmfCfg.rSAQueryTimer, TU_TO_MSEC(201));
+		&prStaRec->rPmfCfg.rSAQueryTimer, TU_TO_MSEC(SA_QUERY_TIMEOUT));
 
 }
 

@@ -2837,6 +2837,12 @@ wlanoidSetConnect(IN struct ADAPTER *prAdapter,
 		  OUT uint32_t *pu4SetInfoLen);
 
 uint32_t
+wlanoidUpdateConnect(IN struct ADAPTER *prAdapter,
+		IN void *pvSetBuffer,
+		IN uint32_t u4SetBufferLen,
+		OUT uint32_t *pu4SetInfoLen);
+
+uint32_t
 wlanoidSetSsid(IN struct ADAPTER *prAdapter,
 	       IN void *pvSetBuffer,
 	       IN uint32_t u4SetBufferLen,
@@ -3890,6 +3896,13 @@ uint32_t wlanoidSetMonitor(IN struct ADAPTER *prAdapter,
 			   IN void *pvSetBuffer,
 			   IN uint32_t u4SetBufferLen,
 			   OUT uint32_t *pu4SetInfoLen);
+#endif
+
+#if CFG_SUPPORT_RSSI_DISCONNECT
+uint32_t wlanoidQueryRssiDisconnect(IN struct ADAPTER *prAdapter,
+			IN void *pvSetBuffer,
+			IN uint32_t u4SetBufferLen,
+			OUT uint32_t *pu4SetInfoLen);
 #endif
 
 uint32_t

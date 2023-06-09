@@ -2,30 +2,55 @@
 /*
  * Copyright (c) 2019 MediaTek Inc.
  */
+
 #include "gl_os.h"
 
 #if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
 #include <uapi/linux/sched/types.h>
 #include <linux/sched/task.h>
 #include <linux/cpufreq.h>
-#endif
+#elif KERNEL_VERSION(4, 19, 0) <= CFG80211_VERSION_CODE
+#include <cpu_ctrl.h>
+#include <topo_ctrl.h>
+#include <linux/soc/mediatek/mtk-pm-qos.h>
+#include <helio-dvfsrc-opp.h>
+#define pm_qos_add_request(_req, _class, _value) \
+		mtk_pm_qos_add_request(_req, _class, _value)
+#define pm_qos_update_request(_req, _value) \
+		mtk_pm_qos_update_request(_req, _value)
+#define pm_qos_remove_request(_req) \
+		mtk_pm_qos_remove_request(_req)
+#define pm_qos_request mtk_pm_qos_request
+#define PM_QOS_DDR_OPP MTK_PM_QOS_DDR_OPP
+#define ppm_limit_data cpu_ctrl_data
+#else
+
+#include <cpu_ctrl.h>
+#include <topo_ctrl.h>
+
 #include <linux/pm_qos.h>
+#include <helio-dvfsrc-opp-mt6885.h>
+#endif
 #include "precomp.h"
 
-#ifdef CONFIG_WLAN_MTK_EMI
-#if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
-#include <soc/mediatek/emi.h>
-#else
+#ifdef CFG_MTK_ANDROID_EMI
+#include <mt_emi_api.h>
 #include <memory/mediatek/emi.h>
-#endif
-#define DOMAIN_AP	0
-#define DOMAIN_CONN	2
+#define	REGION_WIFI	26
+#define WIFI_EMI_MEM_SIZE      0x140000
+#define WIFI_EMI_MEM_OFFSET    0x2B0000
+#define	DOMAIN_AP	0
+#define	DOMAIN_CONN	2
 #endif
 
+
 #define MAX_CPU_FREQ (3 * 1024 * 1024) /* in kHZ */
+#define MAX_CLUSTER_NUM  3
 #define CPU_ALL_CORE (0xff)
 #define CPU_BIG_CORE (0xf0)
 #define CPU_LITTLE_CORE (CPU_ALL_CORE - CPU_BIG_CORE)
+
+#define CONNSYS_VERSION_ID  0x20010000
 
 enum ENUM_CPU_BOOST_STATUS {
 	ENUM_CPU_BOOST_STATUS_INIT = 0,
@@ -33,6 +58,8 @@ enum ENUM_CPU_BOOST_STATUS {
 	ENUM_CPU_BOOST_STATUS_STOP,
 	ENUM_CPU_BOOST_STATUS_NUM
 };
+
+static uint32_t u4EmiMetOffset = 0x247000;
 
 uint32_t kalGetCpuBoostThreshold(void)
 {
@@ -59,15 +86,9 @@ int32_t kalCheckTputLoad(IN struct ADAPTER *prAdapter,
 	       TRUE : FALSE;
 }
 
-#if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
-static LIST_HEAD(wlan_policy_list);
-struct wlan_policy {
-	struct freq_qos_request	qos_req;
-	struct list_head	list;
-};
-
 void kalSetTaskUtilMinPct(IN int pid, IN unsigned int min)
 {
+#if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
 	int ret = 0;
 	unsigned int blc_1024;
 	struct task_struct *p;
@@ -105,46 +126,11 @@ void kalSetTaskUtilMinPct(IN int pid, IN unsigned int min)
 		ret = sched_setattr(p, &attr);
 		put_task_struct(p);
 	}
-}
-
-void kalSetCpuFreq(IN int32_t freq)
-{
-	int cpu, ret;
-	struct cpufreq_policy *policy;
-	struct wlan_policy *wReq;
-
-	if (list_empty(&wlan_policy_list)) {
-		for_each_possible_cpu(cpu) {
-			policy = cpufreq_cpu_get(cpu);
-			if (!policy)
-				continue;
-
-			wReq = kzalloc(sizeof(struct wlan_policy), GFP_KERNEL);
-			if (!wReq)
-				break;
-
-			ret = freq_qos_add_request(&policy->constraints,
-				&wReq->qos_req, FREQ_QOS_MIN, 0);
-			if (ret < 0) {
-				pr_info("%s: freq_qos_add_request fail cpu%d\n",
-					__func__, cpu);
-				kfree(wReq);
-				break;
-			}
-
-			list_add_tail(&wReq->list, &wlan_policy_list);
-			cpufreq_cpu_put(policy);
-		}
-	}
-
-	list_for_each_entry(wReq, &wlan_policy_list, list) {
-		freq_qos_update_request(&wReq->qos_req, freq);
-	}
-}
-
-void kalSetDramBoost(IN struct ADAPTER *prAdapter, IN u_int8_t onoff)
-{
+#elif KERNEL_VERSION(4, 19, 0) <= CFG80211_VERSION_CODE
 	/* TODO */
+#else
+	set_task_util_min_pct(pid, min);
+#endif
 }
 
 int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
@@ -152,11 +138,22 @@ int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
 		    IN uint32_t u4BoostCpuTh)
 {
 	struct GLUE_INFO *prGlueInfo = NULL;
-	int32_t i4Freq = -1;
+	struct ppm_limit_data freq_to_set[MAX_CLUSTER_NUM];
+	int32_t i = 0, i4Freq = -1;
+
+	static struct pm_qos_request wifi_qos_request;
 	static u_int8_t fgRequested = ENUM_CPU_BOOST_STATUS_INIT;
 
+	uint32_t u4ClusterNum = topo_ctrl_get_nr_clusters();
+
 	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
+	ASSERT(u4ClusterNum <= MAX_CLUSTER_NUM);
+	/* ACAO, we dont have to set core number */
 	i4Freq = (u4TarPerfLevel >= u4BoostCpuTh) ? MAX_CPU_FREQ : -1;
+	for (i = 0; i < u4ClusterNum; i++) {
+		freq_to_set[i].min = i4Freq;
+		freq_to_set[i].max = i4Freq;
+	}
 
 	if (fgRequested == ENUM_CPU_BOOST_STATUS_INIT) {
 		/* initially enable rps working at small cores */
@@ -174,8 +171,16 @@ int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
 			kalSetTaskUtilMinPct(prGlueInfo->u4RxThreadPid, 100);
 			kalSetTaskUtilMinPct(prGlueInfo->u4HifThreadPid, 100);
 			kalSetRpsMap(prGlueInfo, CPU_BIG_CORE);
-			kalSetCpuFreq(i4Freq);
-			kalSetDramBoost(prAdapter, TRUE);
+			update_userlimit_cpu_freq(CPU_KIR_WIFI,
+				u4ClusterNum, freq_to_set);
+
+			KAL_ACQUIRE_MUTEX(prAdapter, MUTEX_BOOST_CPU);
+			pr_info("Max Dram Freq start\n");
+			pm_qos_add_request(&wifi_qos_request,
+					   PM_QOS_DDR_OPP,
+					   DDR_OPP_0);
+			pm_qos_update_request(&wifi_qos_request, DDR_OPP_0);
+			KAL_RELEASE_MUTEX(prAdapter, MUTEX_BOOST_CPU);
 		}
 	} else {
 		if (fgRequested == ENUM_CPU_BOOST_STATUS_START) {
@@ -187,16 +192,32 @@ int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
 			kalSetTaskUtilMinPct(prGlueInfo->u4RxThreadPid, 0);
 			kalSetTaskUtilMinPct(prGlueInfo->u4HifThreadPid, 0);
 			kalSetRpsMap(prGlueInfo, CPU_LITTLE_CORE);
-			kalSetCpuFreq(i4Freq);
-			kalSetDramBoost(prAdapter, FALSE);
+			update_userlimit_cpu_freq(CPU_KIR_WIFI,
+				u4ClusterNum, freq_to_set);
+
+			KAL_ACQUIRE_MUTEX(prAdapter, MUTEX_BOOST_CPU);
+			pr_info("Max Dram Freq end\n");
+			pm_qos_update_request(&wifi_qos_request, DDR_OPP_UNREQ);
+			pm_qos_remove_request(&wifi_qos_request);
+			KAL_RELEASE_MUTEX(prAdapter, MUTEX_BOOST_CPU);
 		}
 	}
 	kalTraceInt(fgRequested == ENUM_CPU_BOOST_STATUS_START, "kalBoostCpu");
 
 	return 0;
 }
-#endif
-#ifdef CONFIG_WLAN_MTK_EMI
+
+uint32_t kalGetEmiMetOffset(void)
+{
+	return u4EmiMetOffset;
+}
+
+void kalSetEmiMetOffset(uint32_t newEmiMetOffset)
+{
+	u4EmiMetOffset = newEmiMetOffset;
+}
+
+#ifdef CFG_MTK_ANDROID_EMI
 void kalSetEmiMpuProtection(phys_addr_t emiPhyBase, bool enable)
 {
 }
@@ -229,4 +250,11 @@ void kalSetDrvEmiMpuProtection(phys_addr_t emiPhyBase, uint32_t offset,
 			ret);
 	mtk_emimpu_free_region(&region);
 }
+
 #endif
+
+int32_t kalGetConnsysVerId(void)
+{
+	return CONNSYS_VERSION_ID;
+}
+

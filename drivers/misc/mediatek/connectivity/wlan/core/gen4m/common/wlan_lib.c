@@ -70,6 +70,9 @@
 #include "precomp.h"
 #include "mgmt/ais_fsm.h"
 #include "mddp.h"
+//Moto, read MACs from boot params
+#include <linux/of.h>
+#include <linux/of_address.h>
 
 /*******************************************************************************
  *                              C O N S T A N T S
@@ -3921,6 +3924,25 @@ void wlanoidClearTimeoutCheck(IN struct ADAPTER *prAdapter)
 	cnmTimerStopTimer(prAdapter, &(prAdapter->rOidTimeoutTimer));
 }
 
+#ifdef MOTO_UTAGS_MAC
+/* moto, reed wifi mac add from bootargs */
+#define MACSTRLEN 17
+extern int mmi_get_bootarg(char *key, char **value);
+extern void mmi_free_bootarg_res(void);
+
+static inline void strtomac(char * buf, unsigned char macaddr[6]) {
+        if (strchr(buf, ':'))
+                sscanf(buf, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                        &macaddr[0],&macaddr[1], &macaddr[2], &macaddr[3], &macaddr[4], &macaddr[5]);
+        else if (strchr(buf, '-'))
+                sscanf(buf, "%hhx-%hhx-%hhx-%hhx-%hhx-%hhx",
+                        &macaddr[0],&macaddr[1], &macaddr[2], &macaddr[3], &macaddr[4], &macaddr[5]);
+        else
+                DBGLOG(INIT, ERROR, "%s,Can not parse mac address: %s", __func__,buf);
+}
+#endif
+
+
 /*----------------------------------------------------------------------------*/
 /*!
  * @brief This function is called to override network address
@@ -3940,10 +3962,35 @@ uint32_t wlanUpdateNetworkAddress(IN struct ADAPTER
 	const uint8_t aucZeroMacAddr[] = NULL_MAC_ADDR;
 	uint8_t rMacAddr[PARAM_MAC_ADDR_LEN];
 	uint32_t u4SysTime;
+#ifdef MOTO_UTAGS_MAC
+	char *s;
+	char macStr[MACSTRLEN+1] ={0};
+	bool utagMac = FALSE;
+#endif
 
 	DEBUGFUNC("wlanUpdateNetworkAddress");
 
 	ASSERT(prAdapter);
+
+#ifdef MOTO_UTAGS_MAC
+        //Moto, read MACs from bootparams
+        if (mmi_get_bootarg("androidboot.wifimacaddr=", &s) == 0) {
+            DBGLOG(INIT, ERROR, "%s: get wlan MACs bootargs = %s \n", __func__, s);
+            memcpy(macStr, s, MACSTRLEN);
+            utagMac = TRUE;
+            mmi_free_bootarg_res();
+        }
+        else {
+            DBGLOG(INIT, ERROR, "%s: WIFI_MAC_BOOTARG not present in bootargs", __func__);
+        }
+
+        if (utagMac == TRUE) {
+#if CFG_SHOW_MACADDR_SOURCE
+                DBGLOG(INIT, INFO, " Using MAC from boot params=%s\n", macStr);
+#endif
+                strtomac(macStr,rMacAddr);
+        } else
+#endif
 
 	if (kalRetrieveNetworkAddress(prAdapter->prGlueInfo, rMacAddr) == FALSE
 	    || IS_BMCAST_MAC_ADDR(rMacAddr)
@@ -3962,9 +4009,9 @@ uint32_t wlanUpdateNetworkAddress(IN struct ADAPTER
 		/* dynamic generate */
 		u4SysTime = (uint32_t) kalGetTimeTick();
 
-		rMacAddr[0] = 0x00;
-		rMacAddr[1] = 0x08;
-		rMacAddr[2] = 0x22;
+		rMacAddr[0] = 0xF0;
+		rMacAddr[1] = 0xD7;
+		rMacAddr[2] = 0xAA;
 
 		kalMemCopy(&rMacAddr[3], &u4SysTime, 3);
 
@@ -7537,7 +7584,7 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->ucStaBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "StaBw", MAX_BW_160MHZ);
 	prWifiVar->ucSta2gBandwidth = (uint8_t) wlanCfgGetUint32(
-				prAdapter, "Sta2gBw", MAX_BW_40MHZ);
+				prAdapter, "Sta2gBw", MAX_BW_20MHZ);
 	prWifiVar->ucSta5gBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "Sta5gBw", MAX_BW_160MHZ);
 	prWifiVar->ucSta6gBandwidth = (uint8_t) wlanCfgGetUint32(
@@ -7661,8 +7708,6 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->u4NetifStartTh = (uint32_t) wlanCfgGetUint32(
 					prAdapter, "NetifStartTh",
 					CFG_TX_START_NETIF_PER_QUEUE_THRESHOLD);
-	prWifiVar->u4NetifStopThBackup = prWifiVar->u4NetifStopTh;
-	prWifiVar->u4NetifStartThBackup = prWifiVar->u4NetifStartTh;
 	prWifiVar->ucTxBaSize = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "TxBaSize",
 					WLAN_LEGACY_MAX_BA_SIZE);
@@ -8243,7 +8288,7 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 
 	prWifiVar->fgSapChannelSwitchPolicy = (uint32_t) wlanCfgGetUint32(
 		prAdapter, "SapChannelSwitchPolicy",
-		P2P_CHANNEL_SWITCH_POLICY_SCC);
+		P2P_CHANNEL_SWITCH_POLICY_SKIP_DFS_USER); //MOTO IKSWT-58657 avoid starting SAP on DFS channels
 
 	prWifiVar->fgSapConcurrencyPolicy = (uint32_t) wlanCfgGetUint32(
 		prAdapter, "SapConcurrencyPolicy",
@@ -12484,7 +12529,8 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 		if ((rate >= 5) && (rate <= 7))
 			rate -= 4;
 		if (rate >= ucMaxSize) {
-			DBGLOG(SW4, ERROR, "rate error for CCK: %u\n", rate);
+			DBGLOG_LIMITED(SW4, ERROR, "rate error for CCK: %u\n",
+					rate);
 			return -1;
 		}
 		u4CurRate = g_rCckDataRateMappingTable.rate[rate];
@@ -12493,7 +12539,7 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 	} else if (txmode == TX_RATE_MODE_OFDM) { /* 11G */
 		u4CurRate = wlanHwRateOfdmNum(rate);
 		if (u4CurRate == 0) {
-			DBGLOG(SW4, ERROR, "rate error for OFDM\n");
+			DBGLOG_LIMITED(SW4, ERROR, "rate error for OFDM\n");
 			return -1;
 		}
 		u4MaxRate = g_rOfdmDataRateMappingTable
@@ -12501,20 +12547,20 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 	} else if ((txmode == TX_RATE_MODE_HTMIX) ||
 		   (txmode == TX_RATE_MODE_HTGF)) { /* 11N */
 		if ((nsts == 0) || (nsts >= 4)) {
-			DBGLOG(SW4, ERROR, "nsts error: %u\n", nsts);
+			DBGLOG_LIMITED(SW4, ERROR, "nsts error: %u\n", nsts);
 			return -1;
 		}
 
 		ucMaxSize = 8;
 		if (rate > 23) {
-			DBGLOG(SW4, ERROR, "rate error for 11N: %u\n",
+			DBGLOG_LIMITED(SW4, ERROR, "rate error for 11N: %u\n",
 			       rate);
 			return -1;
 		}
 		rate %= ucMaxSize;
 
 		if (frmode > 1) {
-			DBGLOG(SW4, ERROR,
+			DBGLOG_LIMITED(SW4, ERROR,
 			       "frmode error for 11N: %u\n",
 			       frmode);
 			return -1;
@@ -12525,12 +12571,12 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 				.sgi[sgi].rate[MCS_IDX_MAX_RATE_HT];
 	} else if (txmode == TX_RATE_MODE_VHT) { /* 11AC */
 		if ((nsts == 0) || (nsts >= 4)) {
-			DBGLOG(SW4, ERROR, "nsts error: %u\n", nsts);
+			DBGLOG_LIMITED(SW4, ERROR, "nsts error: %u\n", nsts);
 			return -1;
 		}
 
 		if (frmode > 3) {
-			DBGLOG(SW4, ERROR,
+			DBGLOG_LIMITED(SW4, ERROR,
 			       "frmode error for 11AC: %u\n",
 			       frmode);
 			return -1;
@@ -12539,7 +12585,7 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 		ucMaxSize = ARRAY_SIZE(g_rDataRateMappingTable.nsts[nsts - 1]
 				.bw[frmode].sgi[sgi].rate);
 		if (rate >= ucMaxSize) {
-			DBGLOG(SW4, ERROR, "rate error for 11AC: %u\n",
+			DBGLOG_LIMITED(SW4, ERROR, "rate error for 11AC: %u\n",
 			       rate);
 			return -1;
 		}
@@ -12549,15 +12595,16 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 		u4MaxRate = g_rDataRateMappingTable.nsts[nsts - 1].bw[frmode]
 				.sgi[sgi].rate[MCS_IDX_MAX_RATE_VHT];
 	} else if ((txmode == TX_RATE_MODE_HE_SU) ||
-		(txmode == TX_RATE_MODE_HE_ER)) { /* AX */
+		(txmode == TX_RATE_MODE_HE_ER) ||
+		(txmode == TX_RATE_MODE_HE_MU)) { /* AX */
 		uint8_t dcm = 0, ru106 = 0;
 
 		if ((nsts == 0) || (nsts >= 5)) {
-			DBGLOG(SW4, ERROR, "nsts error: %u\n", nsts);
+			DBGLOG_LIMITED(SW4, ERROR, "nsts error: %u\n", nsts);
 			return -1;
 		}
 		if (frmode > 3) {
-			DBGLOG(SW4, ERROR,
+			DBGLOG_LIMITED(SW4, ERROR,
 			       "frmode error for 11AX: %u\n",
 			       frmode);
 			return -1;
@@ -12571,7 +12618,7 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 		ucMaxSize = ARRAY_SIZE(g_rAxDataRateMappingTable.nsts[nsts - 1]
 				.bw[frmode].gi[sgi].rate);
 		if (rate >= ucMaxSize) {
-			DBGLOG(SW4, ERROR, "rate error for 11AX: %u\n",
+			DBGLOG_LIMITED(SW4, ERROR, "rate error for 11AX: %u\n",
 			       rate);
 			return -1;
 		}
@@ -12586,14 +12633,17 @@ int wlanQueryRateByTable(uint32_t txmode, uint32_t rate,
 			u4MaxRate = u4MaxRate >> 1;
 		}
 	} else {
-		DBGLOG(SW4, ERROR,
+		DBGLOG_LIMITED(SW4, ERROR,
 			"Unknown rate for [%d,%d,%d,%d,%d]\n",
 			txmode, nsts, frmode, sgi, rate);
 		return -1;
 	}
 
-	*pu4CurRate = u4CurRate;
-	*pu4MaxRate = u4MaxRate;
+
+	if (pu4CurRate)
+		*pu4CurRate = u4CurRate;
+	if (pu4MaxRate)
+		*pu4MaxRate = u4MaxRate;
 	return 0;
 }
 
@@ -12741,23 +12791,31 @@ errhandle:
 #endif /* CFG_REPORT_MAX_TX_RATE */
 
 #ifdef CFG_SUPPORT_LINK_QUALITY_MONITOR
-int wlanGetRxRate(IN struct GLUE_INFO *prGlueInfo,
-		IN uint8_t ucBssIdx, OUT uint32_t *pu4CurRate,
-		OUT uint32_t *pu4MaxRate, uint32_t *pu4CurBw)
+int wlanGetRxRate(IN struct GLUE_INFO *prGlueInfo, IN uint8_t ucBssIdx,
+		OUT uint32_t *pu4CurRate, OUT uint32_t *pu4MaxRate,
+		OUT struct RateInfo *prRateInfo)
 {
 	struct ADAPTER *prAdapter;
 	uint32_t rxmode = 0, rate = 0, frmode = 0, sgi = 0, nss = 0;
 	int rv;
 	struct CHIP_DBG_OPS *prChipDbg;
 
-	*pu4CurRate = 0;
-	*pu4MaxRate = 0;
+	if (pu4CurRate)
+		*pu4CurRate = 0;
+	if (pu4MaxRate)
+		*pu4MaxRate = 0;
+	if (prRateInfo)
+		*prRateInfo = (const struct RateInfo){0};
 	prAdapter = prGlueInfo->prAdapter;
+
+	if (!IS_BSS_INDEX_AIS(prAdapter, ucBssIdx))
+		return -1;
 
 	prChipDbg = prAdapter->chip_info->prDebugOps;
 	if (prChipDbg && prChipDbg->get_rx_rate_info) {
 		rv = prChipDbg->get_rx_rate_info(
 				prAdapter,
+				ucBssIdx,
 				&rate,
 				&nss,
 				&rxmode,
@@ -12768,8 +12826,13 @@ int wlanGetRxRate(IN struct GLUE_INFO *prGlueInfo,
 			goto errhandle;
 	}
 
-	if (pu4CurBw)
-		*pu4CurBw = frmode;
+	if (prRateInfo) {
+		prRateInfo->u4Mode = rxmode;
+		prRateInfo->u4Nss = nss;
+		prRateInfo->u4Bw = frmode;
+		prRateInfo->u4Gi = sgi;
+		prRateInfo->u4Rate = rate;
+	}
 
 	rv = wlanQueryRateByTable(rxmode, rate, frmode, sgi, nss,
 				 pu4CurRate, pu4MaxRate);
@@ -12881,7 +12944,7 @@ void wlanFinishCollectingLinkQuality(struct GLUE_INFO *prGlueInfo)
 {
 	struct ADAPTER *prAdapter;
 	struct WIFI_LINK_QUALITY_INFO *prLinkQualityInfo = NULL;
-	uint32_t u4CurRxRate, u4MaxRxRate, u4CurRxBw;
+	uint32_t u4CurRxRate, u4MaxRxRate;
 	uint64_t u8TxFailCntDif, u8TxTotalCntDif;
 
 	prAdapter = prGlueInfo->prAdapter;
@@ -12921,7 +12984,7 @@ void wlanFinishCollectingLinkQuality(struct GLUE_INFO *prGlueInfo)
 
 	/* get current rx rate */
 	if (wlanGetRxRate(prGlueInfo, AIS_DEFAULT_INDEX,
-		&u4CurRxRate, &u4MaxRxRate, &u4CurRxBw) < 0)
+			&u4CurRxRate, &u4MaxRxRate, NULL) < 0)
 		prLinkQualityInfo->u4CurRxRate = 0;
 	else
 		prLinkQualityInfo->u4CurRxRate = u4CurRxRate;
