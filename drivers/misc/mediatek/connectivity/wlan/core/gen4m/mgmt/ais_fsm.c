@@ -203,6 +203,7 @@ void aisInitializeConnectionSettings(IN struct ADAPTER *prAdapter,
 	struct CONNECTION_SETTINGS *prConnSettings;
 	uint8_t aucAnyBSSID[] = BC_BSSID;
 	uint8_t aucZeroMacAddr[] = NULL_MAC_ADDR;
+	int i = 0;
 
 	prConnSettings = aisGetConnSettings(prAdapter, ucBssIndex);
 
@@ -302,27 +303,6 @@ void aisInitializeConnectionSettings(IN struct ADAPTER *prAdapter,
 	prAdapter->rWifiVar.uc5GBandwidthMode = CONFIG_BW_20_40M;
 	prAdapter->rWifiVar.uc6GBandwidthMode = CONFIG_BW_20_40_80M;
 
-	aisInitializeConnectionRsnInfo(prAdapter, ucBssIndex);
-} /* end of aisFsmInitializeConnectionSettings() */
-
-/*----------------------------------------------------------------------------*/
-/*!
- * @brief the function is used to initialize the RsnInfo value of the connection
- *        settings for AIS network
- *
- * @param (none)
- *
- * @return (none)
- */
-/*----------------------------------------------------------------------------*/
-void aisInitializeConnectionRsnInfo(IN struct ADAPTER *prAdapter,
-	IN uint8_t ucBssIndex)
-{
-	struct CONNECTION_SETTINGS *prConnSettings;
-	int i = 0;
-
-	prConnSettings = aisGetConnSettings(prAdapter, ucBssIndex);
-
 	prConnSettings->rRsnInfo.ucElemId = 0x30;
 	prConnSettings->rRsnInfo.u2Version = 0x0001;
 	prConnSettings->rRsnInfo.u4GroupKeyCipherSuite = 0;
@@ -334,7 +314,7 @@ void aisInitializeConnectionRsnInfo(IN struct ADAPTER *prAdapter,
 		prConnSettings->rRsnInfo.au4AuthKeyMgtSuite[i] = 0;
 	prConnSettings->rRsnInfo.u2RsnCap = 0;
 	prConnSettings->rRsnInfo.fgRsnCapPresent = FALSE;
-} /* end of aisInitializeConnectionRsnInfo() */
+} /* end of aisFsmInitializeConnectionSettings() */
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -761,20 +741,11 @@ void aisFsmStateInit_JOIN(IN struct ADAPTER *prAdapter,
 		case AUTH_MODE_OPEN:
 			if (prConnSettings->rRsnInfo.au4AuthKeyMgtSuite[0]
 					== WLAN_AKM_SUITE_SAE) {
-				if (rsnSearchPmkidEntry(prAdapter,
-						prBssDesc->aucBSSID,
-						ucBssIndex) == NULL) {
-					prAisFsmInfo->ucAvailableAuthTypes =
-					(uint8_t) AUTH_TYPE_SAE;
-					DBGLOG(AIS, INFO,
-						"JOIN INIT: change AUTH to SAE when PMK not found\n");
-				} else {
-					prAisFsmInfo->ucAvailableAuthTypes =
-					(uint8_t) (AUTH_TYPE_OPEN_SYSTEM |
-						   AUTH_TYPE_SAE);
-					DBGLOG(AIS, INFO,
-						"JOIN INIT: eAuthMode == OPEN | SAE\n");
-				}
+				prAisFsmInfo->ucAvailableAuthTypes =
+				(uint8_t) (AUTH_TYPE_OPEN_SYSTEM |
+					AUTH_TYPE_SAE);
+				DBGLOG(AIS, INFO,
+					"JOIN INIT: eAuthMode == OPEN | SAE\n");
 			} else {
 				prAisFsmInfo->ucAvailableAuthTypes =
 				(uint8_t) AUTH_TYPE_OPEN_SYSTEM;
@@ -2106,6 +2077,17 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter,
 			prScanReqMsg->u2ChannelMinDwellTime = 0;
 			prScanReqMsg->u2TimeoutValue = 0;
 
+			/* Reduce APP scan's dwell time, prevent it affecting
+			 * TX/RX performance
+			 */
+			if (prScanRequest->u4Flags &
+				NL80211_SCAN_FLAG_LOW_SPAN) {
+				prScanReqMsg->u2ChannelDwellTime =
+					SCAN_CHANNEL_DWELL_TIME_MSEC_APP;
+				prScanReqMsg->u2ChannelMinDwellTime =
+					SCAN_CHANNEL_MIN_DWELL_TIME_MSEC_APP;
+			}
+
 			/* for 6G OOB scan */
 			kalMemCopy(prScanReqMsg->ucBssidMatchCh,
 				prScanRequest->ucBssidMatchCh,
@@ -2202,18 +2184,6 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter,
 				break;
 			}
 
-			/* Reduce APP scan's dwell time when scan ch > 5,
-			 * prevent it affecting TX/RX performance
-			 */
-			if ((prScanRequest->u4Flags &
-				NL80211_SCAN_FLAG_LOW_SPAN)
-				&& prScanReqMsg->ucChannelListNum > 5) {
-				prScanReqMsg->u2ChannelDwellTime =
-					SCAN_CHANNEL_DWELL_TIME_MSEC_APP;
-				prScanReqMsg->u2ChannelMinDwellTime =
-					SCAN_CHANNEL_MIN_DWELL_TIME_MSEC_APP;
-			}
-
 			if (prAdapter->rWifiVar.u4SwTestMode ==
 			    ENUM_SW_TEST_MODE_SIGMA_VOICE_ENT &&
 			    prScanReqMsg->ucChannelListNum == 1) {
@@ -2239,8 +2209,6 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter,
 #endif
 			prScanReqMsg->u2IELen = u2ScanIELen;
 
-			scanInitEssResult(prAdapter);
-
 			mboxSendMsg(prAdapter, MBOX_ID_0,
 				    (struct MSG_HDR *)prScanReqMsg,
 				    MSG_SEND_METHOD_BUF);
@@ -2264,7 +2232,6 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter,
 			 * is triggered by Driver
 			*/
 			prScanRequest->u4Flags = 0;
-
 			break;
 
 		case AIS_STATE_REQ_CHANNEL_JOIN:
@@ -2622,6 +2589,10 @@ void aisFsmRunEventScanDone(IN struct ADAPTER *prAdapter,
 	struct ROAMING_INFO *prRoamingFsmInfo = NULL;
 	uint8_t ucBssIndex = 0;
 
+#if (CFG_SUPPORT_WIFI_RNR == 1)
+	struct NEIGHBOR_AP_INFO *prNeighborAPInfo;
+#endif
+
 	DEBUGFUNC("aisFsmRunEventScanDone()");
 
 	prScanDoneMsg = (struct MSG_SCN_SCAN_DONE *)prMsgHdr;
@@ -2664,9 +2635,12 @@ void aisFsmRunEventScanDone(IN struct ADAPTER *prAdapter,
 		prAisFsmInfo->u2SeqNumOfScanReport) {
 		prAisFsmInfo->u2SeqNumOfScanReport = AIS_SCN_REPORT_SEQ_NOT_SET;
 		prConnSettings->fgIsScanReqIssued = FALSE;
-		kalScanDone(prAdapter->prGlueInfo, ucBssIndex,
-			(eStatus == SCAN_STATUS_DONE) ?
-			WLAN_STATUS_SUCCESS : WLAN_STATUS_FAILURE);
+#if (CFG_SUPPORT_WIFI_RNR == 1)
+		if (LINK_IS_EMPTY(&prAdapter->rNeighborAPInfoList))
+#endif
+			kalScanDone(prAdapter->prGlueInfo, ucBssIndex,
+				(eStatus == SCAN_STATUS_DONE) ?
+				WLAN_STATUS_SUCCESS : WLAN_STATUS_FAILURE);
 	}
 	if (ucSeqNumOfCompMsg != prAisFsmInfo->ucSeqNumOfScanReq) {
 		DBGLOG(AIS, WARN,
@@ -2717,6 +2691,20 @@ void aisFsmRunEventScanDone(IN struct ADAPTER *prAdapter,
 	}
 	if (eNextState != prAisFsmInfo->eCurrentState)
 		aisFsmSteps(prAdapter, eNextState, ucBssIndex);
+
+#if (CFG_SUPPORT_WIFI_RNR == 1)
+	if (!LINK_IS_EMPTY(&prAdapter->rNeighborAPInfoList)) {
+		LINK_REMOVE_HEAD(&prAdapter->rNeighborAPInfoList,
+			prNeighborAPInfo, struct NEIGHBOR_AP_INFO *);
+		cnmTimerStartTimer(prAdapter,
+				   aisGetScanDoneTimer(prAdapter, ucBssIndex),
+				   SEC_TO_MSEC(AIS_SCN_DONE_TIMEOUT_SEC));
+		aisFsmScanRequestAdv(prAdapter,
+			&prNeighborAPInfo->rScanRequest);
+		cnmMemFree(prAdapter, prNeighborAPInfo);
+		return;
+	}
+#endif
 
 	if (prBcnRmParam->eState == RM_NO_REQUEST)
 		return;

@@ -101,12 +101,6 @@ const long channel_freq[] = {
 #define MAX_SSID_LEN    32
 #define COUNTRY_CODE_LEN	10	/* country code length */
 
-#if CFG_SUPPORT_WAPI
-#define KEY_BUF_SIZE	1024
-#else
-#define KEY_BUF_SIZE	100
-#endif
-
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************
@@ -2941,6 +2935,8 @@ wext_get_encode(IN struct net_device *prNetDev,
  * \note Securiry information is stored in pEnc.
  */
 /*----------------------------------------------------------------------------*/
+static uint8_t wepBuf[48];
+
 static int
 wext_set_encode(IN struct net_device *prNetDev,
 		IN struct iw_request_info *prIwrInfo,
@@ -2950,7 +2946,6 @@ wext_set_encode(IN struct net_device *prNetDev,
 	enum ENUM_WEP_STATUS eEncStatus;
 	enum ENUM_PARAM_AUTH_MODE eAuthMode;
 	/* UINT_8 wepBuf[48]; */
-	uint8_t wepBuf[48];
 	struct PARAM_WEP *prWepKey = (struct PARAM_WEP *) wepBuf;
 
 	struct GLUE_INFO *prGlueInfo = NULL;
@@ -3375,20 +3370,22 @@ wext_set_auth(IN struct net_device *prNetDev,
  * \note Securiry information is stored in pEnc.
  */
 /*----------------------------------------------------------------------------*/
+#if CFG_SUPPORT_WAPI
+uint8_t keyStructBuf[1024];	/* add/remove key shared buffer */
+#else
+uint8_t keyStructBuf[100];	/* add/remove key shared buffer */
+#endif
+
 static int
 wext_set_encode_ext(IN struct net_device *prNetDev,
 		    IN struct iw_request_info *prIwrInfo,
 		    IN struct iw_point *prEnc, IN char *pcExtra)
 {
-	uint8_t wepBuf[48];
-	struct PARAM_WEP *prWepKey = (struct PARAM_WEP *) wepBuf;
+	struct PARAM_REMOVE_KEY *prRemoveKey =
+				(struct PARAM_REMOVE_KEY *) keyStructBuf;
+	struct PARAM_KEY *prKey = (struct PARAM_KEY *) keyStructBuf;
 
-	uint8_t *keyStructBuf;
-	struct PARAM_REMOVE_KEY *prRemoveKey;
-	struct PARAM_KEY *prKey;
-#if CFG_SUPPORT_WAPI
-	struct PARAM_WPI_KEY *prWpiKey;
-#endif
+	struct PARAM_WEP *prWepKey = (struct PARAM_WEP *) wepBuf;
 
 	struct iw_encode_ext *prIWEncExt = (struct iw_encode_ext *)
 					   pcExtra;
@@ -3397,12 +3394,16 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 	enum ENUM_PARAM_AUTH_MODE eAuthMode;
 	/* ENUM_PARAM_OP_MODE_T eOpMode = NET_TYPE_AUTO_SWITCH; */
 
+#if CFG_SUPPORT_WAPI
+	struct PARAM_WPI_KEY *prWpiKey = (struct PARAM_WPI_KEY *)
+					 keyStructBuf;
+#endif
+
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 	uint32_t u4BufLen = 0;
 	struct GL_WPA_INFO *prWpaInfo;
 	uint8_t ucBssIndex = AIS_DEFAULT_INDEX;
-	int ret = 0;
 
 	ASSERT(prNetDev);
 	ASSERT(prEnc);
@@ -3419,21 +3420,14 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 	prWpaInfo = aisGetWpaInfo(prGlueInfo->prAdapter,
 		ucBssIndex);
 
-	keyStructBuf = kalMemAlloc(KEY_BUF_SIZE, VIR_MEM_TYPE);
-	if (keyStructBuf == NULL) {
-		DBGLOG(REQ, ERROR, "alloc key buffer fail\n");
-		return -ENOMEM;
-	}
-	kalMemSet(keyStructBuf, 0, KEY_BUF_SIZE);
+	memset(keyStructBuf, 0, sizeof(keyStructBuf));
 
 #if CFG_SUPPORT_WAPI
 	if (prIWEncExt->alg == IW_ENCODE_ALG_SMS4) {
 		if (prEnc->flags & IW_ENCODE_DISABLED) {
 			/* printk(KERN_INFO "[wapi] IW_ENCODE_DISABLED\n"); */
-			ret = 0;
-			goto freeBuf;
+			return 0;
 		}
-		prWpiKey = (struct PARAM_WPI_KEY *) keyStructBuf;
 		/* KeyID */
 		prWpiKey->ucKeyID = (prEnc->flags & IW_ENCODE_INDEX);
 		prWpiKey->ucKeyID--;
@@ -3443,8 +3437,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 			 *	  "[wapi] add key error: key_id invalid %d\n",
 			 *	  prWpiKey->ucKeyID);
 			 */
-			ret = -EINVAL;
-			goto freeBuf;
+			return -EINVAL;
 		}
 
 		if (prIWEncExt->key_len != 32) {
@@ -3453,8 +3446,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 			 *        "[wapi] add key error: key_len invalid %d\n",
 			 *	  prIWEncExt->key_len);
 			 */
-			ret = -EINVAL;
-			goto freeBuf;
+			return -EINVAL;
 		}
 		/* printk(KERN_INFO "[wapi] %d ext_flags %d\n", prEnc->flags,
 		 *        prIWEncExt->ext_flags);
@@ -3500,7 +3492,6 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 	{
 
 		if ((prEnc->flags & IW_ENCODE_MODE) == IW_ENCODE_DISABLED) {
-			prRemoveKey = (struct PARAM_REMOVE_KEY *) keyStructBuf;
 			prRemoveKey->u4Length = sizeof(*prRemoveKey);
 			memcpy(prRemoveKey->arBSSID,
 			       prIWEncExt->addr.sa_data, 6);
@@ -3517,8 +3508,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 			if (rStatus != WLAN_STATUS_SUCCESS)
 				DBGLOG(INIT, INFO, "remove key error:%x\n",
 				       rStatus);
-			ret = 0;
-			goto freeBuf;
+			return 0;
 		}
 		/* return 0; */
 		/* printk ("alg %x\n", prIWEncExt->alg); */
@@ -3542,8 +3532,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 					0;
 				if (prWepKey->u4KeyIndex > 3) {
 					/* key id is out of range */
-					ret = -EINVAL;
-					goto freeBuf;
+					return -EINVAL;
 				}
 				prWepKey->u4KeyIndex |= 0x80000000;
 				prWepKey->u4Length = 12 + prIWEncExt->key_len;
@@ -3565,8 +3554,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 					DBGLOG(INIT, INFO,
 					       "wlanoidSetAddWep fail 0x%x\n",
 					       rStatus);
-					ret = -EFAULT;
-					goto freeBuf;
+					return -EFAULT;
 				}
 
 				/* change to auto switch */
@@ -3586,8 +3574,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 					DBGLOG(INIT, INFO,
 					       "wlanoidSetAuthMode fail 0x%x\n",
 					       rStatus);
-					ret = -EFAULT;
-					goto freeBuf;
+					return -EFAULT;
 				}
 
 				prWpaInfo->u4CipherPairwise =
@@ -3610,8 +3597,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 					DBGLOG(INIT, INFO,
 					       "wlanoidSetEncryptionStatus fail 0x%x\n",
 					       rStatus);
-					ret = -EFAULT;
-					goto freeBuf;
+					return -EFAULT;
 				}
 
 			} else {
@@ -3627,7 +3613,6 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 		case IW_ENCODE_ALG_AES_CMAC:
 #endif
 		{
-			prKey = (struct PARAM_KEY *) keyStructBuf;
 
 			/* KeyID */
 			prKey->u4KeyIndex = (prEnc->flags & IW_ENCODE_INDEX) ?
@@ -3640,8 +3625,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 				DBGLOG(INIT, INFO, "key index error:0x%x\n",
 				       prKey->u4KeyIndex);
 				/* key id is out of range */
-				ret = -EINVAL;
-				goto freeBuf;
+				return -EINVAL;
 			}
 
 			/* bit(31) and bit(30) are shared by pKey and
@@ -3684,8 +3668,7 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 				DBGLOG(REQ, ERROR,
 				       "prIWEncExt->key_len: %u is too long!\n",
 				       prIWEncExt->key_len);
-				ret = -EINVAL;
-				goto freeBuf;
+				return -EINVAL;
 			}
 			memcpy(prKey->aucKeyMaterial, prIWEncExt->key,
 			       prIWEncExt->key_len);
@@ -3701,207 +3684,14 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 
 		if (rStatus != WLAN_STATUS_SUCCESS) {
 			DBGLOG(INIT, INFO, "add key error:%x\n", rStatus);
-			ret = -EFAULT;
-			goto freeBuf;
+			return -EFAULT;
 		}
 		break;
 	}
 	}
 
-	ret = 0;
-
-freeBuf:
-	if (keyStructBuf)
-		kalMemFree(keyStructBuf, VIR_MEM_TYPE, KEY_BUF_SIZE);
-	return ret;
+	return 0;
 }				/* wext_set_encode_ext */
-
-/*----------------------------------------------------------------------------*/
-/*!
- * \brief check country code is fcc  or not
- *
- * \param[in] country_code country code  requested.
- *
- * \retval 0 For success.
- * \retval -EEFAULT For fail.
- *
- * \note Country code is stored and channel list is updated based on current
- *	 country domain.
- */
-/*----------------------------------------------------------------------------*/
-
-
-uint32_t country_code_is_in_fcc_group(uint16_t country_code)
-{
-	uint32_t i;
-	uint16_t country_code_fcc[] = {
-		COUNTRY_CODE_AG, COUNTRY_CODE_AS, /*COUNTRY_CODE_AX,*/ COUNTRY_CODE_AU,
-		COUNTRY_CODE_BS, COUNTRY_CODE_BB, COUNTRY_CODE_BM, COUNTRY_CODE_BO,
-		COUNTRY_CODE_BR, COUNTRY_CODE_BN, COUNTRY_CODE_BF, COUNTRY_CODE_CA,
-		COUNTRY_CODE_KY, COUNTRY_CODE_CF, COUNTRY_CODE_CL, COUNTRY_CODE_CX,
-		COUNTRY_CODE_CO, COUNTRY_CODE_CK, COUNTRY_CODE_CR, COUNTRY_CODE_CI,
-		COUNTRY_CODE_DM, COUNTRY_CODE_DO, COUNTRY_CODE_EC, COUNTRY_CODE_SV,
-		COUNTRY_CODE_GH, COUNTRY_CODE_GD, COUNTRY_CODE_GU, COUNTRY_CODE_HT,
-		/*COUNTRY_CODE_HM,*/ COUNTRY_CODE_HN, COUNTRY_CODE_HK, COUNTRY_CODE_JM,
-		COUNTRY_CODE_LB, COUNTRY_CODE_MO, COUNTRY_CODE_MY, COUNTRY_CODE_MH,
-		COUNTRY_CODE_MX, COUNTRY_CODE_FM, COUNTRY_CODE_MN, COUNTRY_CODE_NZ,
-		COUNTRY_CODE_NI, COUNTRY_CODE_NF, COUNTRY_CODE_MP, COUNTRY_CODE_PW,
-		COUNTRY_CODE_PA, COUNTRY_CODE_PG, COUNTRY_CODE_PY, COUNTRY_CODE_PE,
-		COUNTRY_CODE_PH, COUNTRY_CODE_PR, COUNTRY_CODE_RW, COUNTRY_CODE_ST,
-		COUNTRY_CODE_SN, COUNTRY_CODE_SG, COUNTRY_CODE_ZA, COUNTRY_CODE_LK,
-		/*COUNTRY_CODE_SJ,*/ COUNTRY_CODE_TW, COUNTRY_CODE_TH, COUNTRY_CODE_TT,
-		COUNTRY_CODE_TC, COUNTRY_CODE_UG, COUNTRY_CODE_US, /*COUNTRY_CODE_UM,*/
-		COUNTRY_CODE_UY, COUNTRY_CODE_VU, COUNTRY_CODE_VE, COUNTRY_CODE_VN,
-		COUNTRY_CODE_VI
-	};
-
-	for (i = 0; i < ARRAY_SIZE(country_code_fcc); i++) {
-		if (country_code == country_code_fcc[i])
-			return 1;
-	}
-	return 0;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
- * \brief check country code is ce  or not
- *
- * \param[in] country_code country code  requested.
- *
- * \retval 0 For success.
- * \retval -EEFAULT For fail.
- *
- * \note Country code is stored and channel list is updated based on current
- *	 country domain.
- */
-/*----------------------------------------------------------------------------*/
-
-uint32_t country_code_is_in_ce_group(uint16_t country_code)
-{
-	uint32_t i;
-	uint16_t country_code_ce[] = {
-		COUNTRY_CODE_AF, COUNTRY_CODE_AL, COUNTRY_CODE_AD, COUNTRY_CODE_AI,
-		COUNTRY_CODE_AW, COUNTRY_CODE_AT, COUNTRY_CODE_AZ, COUNTRY_CODE_BY,
-		COUNTRY_CODE_BE, COUNTRY_CODE_BZ, COUNTRY_CODE_BT, COUNTRY_CODE_BA,
-		COUNTRY_CODE_BG, COUNTRY_CODE_KH, COUNTRY_CODE_CM, COUNTRY_CODE_TD,
-		COUNTRY_CODE_CG, COUNTRY_CODE_CD, COUNTRY_CODE_HR, COUNTRY_CODE_CY,
-		COUNTRY_CODE_CZ, COUNTRY_CODE_DK, COUNTRY_CODE_EG, COUNTRY_CODE_EE,
-		COUNTRY_CODE_ET, COUNTRY_CODE_FK, COUNTRY_CODE_FO, COUNTRY_CODE_FI,
-		COUNTRY_CODE_FR, COUNTRY_CODE_GF, COUNTRY_CODE_PF, COUNTRY_CODE_TF,
-		COUNTRY_CODE_GE, COUNTRY_CODE_DE, COUNTRY_CODE_GI, COUNTRY_CODE_GR,
-		/*COUNTRY_CODE_GL,*/ COUNTRY_CODE_GP, COUNTRY_CODE_GG, COUNTRY_CODE_VA,
-		COUNTRY_CODE_HU, COUNTRY_CODE_IS, COUNTRY_CODE_IQ, COUNTRY_CODE_IE,
-		COUNTRY_CODE_IM, COUNTRY_CODE_IL, COUNTRY_CODE_IT, COUNTRY_CODE_JE,
-		COUNTRY_CODE_KE, COUNTRY_CODE_KW, COUNTRY_CODE_LV, COUNTRY_CODE_LS,
-		COUNTRY_CODE_LI, COUNTRY_CODE_LT, COUNTRY_CODE_LU, COUNTRY_CODE_MK,
-		COUNTRY_CODE_MW, COUNTRY_CODE_MT, COUNTRY_CODE_MQ, COUNTRY_CODE_MR,
-		COUNTRY_CODE_MU, COUNTRY_CODE_YT, COUNTRY_CODE_MD, COUNTRY_CODE_MC,
-		COUNTRY_CODE_ME, COUNTRY_CODE_MS, COUNTRY_CODE_MA, COUNTRY_CODE_NL,
-		COUNTRY_CODE_AN, COUNTRY_CODE_NC, COUNTRY_CODE_NU, COUNTRY_CODE_NO,
-		COUNTRY_CODE_OM, COUNTRY_CODE_PL, COUNTRY_CODE_PT, COUNTRY_CODE_QA,
-		COUNTRY_CODE_RE, COUNTRY_CODE_RO, COUNTRY_CODE_RU, /*COUNTRY_CODE_BL,*/
-		/*COUNTRY_CODE_SH,*/ COUNTRY_CODE_MF, COUNTRY_CODE_PM, COUNTRY_CODE_VC,
-		COUNTRY_CODE_WS, COUNTRY_CODE_SM, COUNTRY_CODE_SA, COUNTRY_CODE_RS,
-		/*COUNTRY_CODE_SX,*/ COUNTRY_CODE_SK, COUNTRY_CODE_SI, COUNTRY_CODE_ES,
-		COUNTRY_CODE_SR, COUNTRY_CODE_SE, COUNTRY_CODE_CH, COUNTRY_CODE_TG,
-		COUNTRY_CODE_TN, COUNTRY_CODE_TR, COUNTRY_CODE_UA, COUNTRY_CODE_AE,
-		COUNTRY_CODE_GB, COUNTRY_CODE_UZ, COUNTRY_CODE_VG, /*COUNTRY_CODE_WF,*/
-		COUNTRY_CODE_YE, COUNTRY_CODE_ZW
-	};
-
-	for (i = 0; i < ARRAY_SIZE(country_code_ce); i++) {
-		if (country_code == country_code_ce[i])
-			return 1;
-	}
-	return 0;
-}
-
-uint16_t priCountryCode = COUNTRY_CODE_CN;
-
-/*----------------------------------------------------------------------------*/
-/*!
- * \brief set ce or fcc country to fw
- *
- * \param[in] country_code country code  requested.
- *
- * \retval 0 For success.
- * \retval -EEFAULT For fail.
- *
- * \note Country code is stored and channel list is updated based on current
- *	 country domain.
- */
-/*----------------------------------------------------------------------------*/
-int priv_driver_set_ce_or_fcc_country(struct GLUE_INFO *prGlueInfo,
-		uint16_t u2CountryCode)
-{
-	uint8_t index = 0;
-	char name[64] = {0};
-	struct PARAM_TX_PWR_CTRL_IOCTL rPwrCtrlParam = {0};
-	uint32_t u4SetInfoLen = 0;
-	uint32_t rStatus = WLAN_STATUS_SUCCESS;
-
-	if ((country_code_is_in_fcc_group(priCountryCode) &&
-		!country_code_is_in_fcc_group(u2CountryCode)) ||
-		(country_code_is_in_ce_group(priCountryCode) &&
-		!country_code_is_in_ce_group(u2CountryCode))) {
-		if (country_code_is_in_fcc_group(priCountryCode)) {
-			kalStrnCpy(name, "FCCScenario",
-				strlen("FCCScenario") + 1);
-			index = 0;
-		}
-		if (country_code_is_in_ce_group(priCountryCode)) {
-			kalStrnCpy(name, "CEScenario",
-				strlen("CEScenario") + 1);
-			index = 0;
-		}
-		rPwrCtrlParam.fgApplied = (index == 0) ? FALSE : TRUE;
-		rPwrCtrlParam.name = name;
-		rPwrCtrlParam.index = index;
-		DBGLOG(REQ, INFO, "applied=[%d],name=[%s], index=[%u]\n",
-			rPwrCtrlParam.fgApplied,
-			rPwrCtrlParam.name,
-			rPwrCtrlParam.index);
-		rStatus = kalIoctl(prGlueInfo->prAdapter->prGlueInfo,
-			wlanoidTxPowerControl,
-			(void *)&rPwrCtrlParam,
-			sizeof(struct PARAM_TX_PWR_CTRL_IOCTL),
-			FALSE,
-			FALSE,
-			TRUE,
-			&u4SetInfoLen);
-	}
-
-	priCountryCode = u2CountryCode;
-	if (country_code_is_in_ce_group(u2CountryCode)) {
-		kalStrnCpy(name, "CEScenario", strlen("CEScenario") + 1);
-		index = 1;
-	}
-	else if (country_code_is_in_fcc_group(u2CountryCode)) {
-		kalStrnCpy(name, "FCCScenario", strlen("FCCScenario") + 1);
-		index = 1;
-	}
-	rPwrCtrlParam.fgApplied = (index == 0) ? FALSE : TRUE;
-	rPwrCtrlParam.name = name;
-	rPwrCtrlParam.index = index;
-	if (rPwrCtrlParam.fgApplied) {
-		DBGLOG(REQ, INFO, "applied=[%d],name=[%s], index=[%u]\n",
-			rPwrCtrlParam.fgApplied,
-			rPwrCtrlParam.name,
-			rPwrCtrlParam.index);
-		rStatus = kalIoctl(prGlueInfo->prAdapter->prGlueInfo,
-			wlanoidTxPowerControl,
-			(void *)&rPwrCtrlParam,
-			sizeof(struct PARAM_TX_PWR_CTRL_IOCTL),
-			FALSE,
-			FALSE,
-			TRUE,
-			&u4SetInfoLen);
-	}
-	DBGLOG(REQ, INFO, " priv_driver_set_ce_fcc command end\n");
-	if (rStatus != WLAN_STATUS_SUCCESS)
-		return -1;
-	return 0;
-}
 
 
 /*----------------------------------------------------------------------------*/
@@ -3925,7 +3715,7 @@ static int wext_set_country(IN struct net_device *prNetDev,
 	uint32_t rStatus;
 	uint32_t u4BufLen;
 	uint8_t aucCountry[COUNTRY_CODE_LEN];
-	uint16_t u2CountryCode;
+
 	ASSERT(prNetDev);
 
 	/* prData->pointer should be like "COUNTRY US", "COUNTRY EU"
@@ -3941,12 +3731,7 @@ static int wext_set_country(IN struct net_device *prNetDev,
 			   COUNTRY_CODE_LEN))
 		return -EFAULT;
 
-	DBGLOG(REQ, ERROR, "wext_set_country: %c%c\n",
-		aucCountry[COUNTRY_CODE_LEN - 2], aucCountry[COUNTRY_CODE_LEN - 1]);
-	u2CountryCode = (((uint16_t) aucCountry[COUNTRY_CODE_LEN - 2]) << 8) |
-		((uint16_t) aucCountry[COUNTRY_CODE_LEN - 1]);
-	rStatus = priv_driver_set_ce_or_fcc_country(prGlueInfo, u2CountryCode);
-	rStatus |= kalIoctl(prGlueInfo,
+	rStatus = kalIoctl(prGlueInfo,
 			   wlanoidSetCountryCode,
 			   &aucCountry[COUNTRY_CODE_LEN - 2], 2,
 			   FALSE, FALSE, TRUE, &u4BufLen);
@@ -4187,7 +3972,8 @@ int wext_support_ioctl(IN struct net_device *prDev,
 				ret = -ENOMEM;
 				break;
 			}
-			if (kalMemCopy(prExtraBuf, &iw.essid,
+
+			if (copy_from_user(prExtraBuf, &iw.essid,
 			    iw.essid_len)) {
 				ret = -EFAULT;
 			} else {
@@ -4681,6 +4467,9 @@ wext_indicate_wext_event(IN struct GLUE_INFO *prGlueInfo,
 		wlanGetNetDev(prGlueInfo, ucBssIndex);
 
 	switch (u4Cmd) {
+	case SIOCGIWTXPOW:
+		memcpy(&wrqu.power, pucData, u4dataLen);
+		break;
 	case SIOCGIWSCAN:
 		complete_all(&prGlueInfo->rScanComp);
 		break;

@@ -251,10 +251,8 @@ extern bool fgIsTxPowerDecreased;
 #define TRAFFIC_RHRESHOLD	150
 #endif
 
-#if CFG_SUPPORT_SA_LOG
 #define WIFI_LOG_MSG_MAX	(512)
 #define WIFI_LOG_MSG_BUFFER	(WIFI_LOG_MSG_MAX * 2)
-#endif
 
 #if (CFG_SUPPORT_POWER_THROTTLING == 1)
 #define PWR_LEVEL_STAT_UPDATE_INTERVAL	60	/* sec */
@@ -1058,20 +1056,18 @@ int8_t atoi(uint8_t ch);
 
 #define kalGetTimeTick()                jiffies_to_msecs(jiffies)
 
-#if CFG_SUPPORT_SA_LOG
-#define kalPrintSALogLimited(fmt, ...)					\
+#define kalPrintLogLimited(fmt, ...)					\
 ({									\
 	static DEFINE_RATELIMIT_STATE(_rs,				\
 		DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST);	\
 									\
 	if (__ratelimit(&_rs))						\
-		kalPrintSALog(fmt, ##__VA_ARGS__);			\
+		kalPrintLog(fmt, ##__VA_ARGS__);			\
 })
-#endif
 
 #define WLAN_TAG                        "[wlan]"
-#define kalPrint(_Fmt...)               pr_info(WLAN_TAG _Fmt)
-#define kalPrintLimited(_Fmt...)        pr_info_ratelimited(WLAN_TAG _Fmt)
+#define kalPrint               kalPrintLog
+#define kalPrintLimited(_Fmt...) kalPrintLogLimited(WLAN_TAG _Fmt)
 
 #define kalBreakPoint() \
 do { \
@@ -1166,7 +1162,8 @@ do { \
 /*----------------------------------------------------------------------------*/
 /* Macros of systrace operations for using in Driver Layer                    */
 /*----------------------------------------------------------------------------*/
-#if (CONFIG_WLAN_DRV_BUILD_IN == 0) && (BUILD_QA_DBG == 1)
+#if !CONFIG_WLAN_DRV_BUILD_IN
+
 #define kalTraceBegin(_fmt, ...) \
 	tracing_mark_write("B|%d|" _fmt "\n", current->tgid, ##__VA_ARGS__)
 
@@ -1944,7 +1941,7 @@ int _kalSnprintf(char *buf, size_t size, const char *fmt, ...);
 int _kalSprintf(char *buf, const char *fmt, ...);
 
 /* systrace utilities */
-#if (CONFIG_WLAN_DRV_BUILD_IN == 0) && (BUILD_QA_DBG == 1)
+#if !CONFIG_WLAN_DRV_BUILD_IN
 void tracing_mark_write(const char *fmt, ...);
 #endif
 
@@ -1965,9 +1962,8 @@ void kalSyncTimeToFWByIoctl(void);
 void kalUpdateCompHdlrRec(IN struct ADAPTER *prAdapter,
 	IN PFN_OID_HANDLER_FUNC pfnOidHandler, IN struct CMD_INFO *prCmdInfo);
 
-#if CFG_SUPPORT_SA_LOG
-void kalPrintSALog(const char *fmt, ...);
-#endif
+extern uint32_t get_wifi_standalone_log_mode(void);
+void kalPrintLog(const char *fmt, ...);
 
 #if (CFG_SUPPORT_POWER_THROTTLING == 1)
 void kalPwrLevelHdlrRegister(IN struct ADAPTER *prAdapter,

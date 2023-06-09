@@ -1,5 +1,4 @@
 ccflags-y :=
-WLAN_CHIP_ID := $(CONFIG_MTK_PLATFORM)
 ifeq ($(CONFIG_MTK_PLATFORM),)
 CONFIG_MTK_PLATFORM := mt$(WLAN_CHIP_ID)
 endif
@@ -68,12 +67,6 @@ endif
 ifeq ($(WLAN_CHIP_ID),)
 WLAN_CHIP_ID=$(word 1, $(MTK_COMBO_CHIP))
 endif
-
-# Moto read MACs from boot params
-ccflags-y += -DMOTO_UTAGS_MAC=1
-
-# Moto Dynamic tx power
-ccflags-y += -DMOTO_DYNAMIC_TX_PWR=1
 
 ccflags-y += -DCFG_SUPPORT_DEBUG_FS=0
 ccflags-y += -DWLAN_INCLUDE_PROC
@@ -224,11 +217,6 @@ ccflags-y += -DCONFIG_MTK_WIFI_HE160
 ccflags-y += -DCFG_SUPPORT_BW160
 endif
 
-ifneq ($(findstring devonn,$(TARGET_PRODUCT)),)
-ccflags-y:=$(filter-out -UDEVONN,$(ccflags-y))
-ccflags-y += -DMOTO_MT6855_DEVONN
-endif
-
 ifeq ($(CONFIG_MTK_WIFI_CONNINFRA_SUPPORT), y)
 ccflags-y += -DCFG_ANDORID_CONNINFRA_SUPPORT=1
 else
@@ -296,9 +284,6 @@ ifeq ($(WIFI_ENABLE_GCOV), y)
 endif
 
 ccflags-y += -DCFG_DRIVER_INITIAL_RUNNING_MODE=3
-
-# Moto remove 2.4GHz ch12/13
-ccflags-y += -DCFG_MOT_REM_CH12_CH13
 
 ifneq ($(filter 6765, $(WLAN_CHIP_ID)),)
     ccflags-y += -DCFG_SUPPORT_DUAL_STA=0
@@ -375,7 +360,11 @@ else
     ccflags-y += -DCFG_WIFI_IP_SET=1
 endif
 
-ccflags-y += -DCFG_BUILT_IN_DRIVER=1
+ifneq ($(filter MTK_WCN_REMOVE_KERNEL_MODULE,$(KBUILD_CFLAGS)),)
+    ccflags-y += -DCFG_BUILT_IN_DRIVER=1
+else
+    ccflags-y += -DCFG_BUILT_IN_DRIVER=0
+endif
 
 ifneq ($(findstring UT_TEST_MODE,$(MTK_COMBO_CHIP)),)
 ccflags-y:=$(filter-out -UUT_TEST_MODE,$(ccflags-y))
@@ -611,8 +600,7 @@ COMMON_OBJS := 	$(COMMON_DIR)dump.o \
 		$(COMMON_DIR)wlan_lib.o \
 		$(COMMON_DIR)wlan_oid.o \
 		$(COMMON_DIR)wlan_bow.o \
-		$(COMMON_DIR)debug.o \
-        $(COMMON_DIR)mot_config.o
+		$(COMMON_DIR)debug.o
 
 NIC_OBJS := 	$(NIC_DIR)nic.o \
 		$(NIC_DIR)nic_tx.o \

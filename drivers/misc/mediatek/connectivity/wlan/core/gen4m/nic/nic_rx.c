@@ -419,30 +419,6 @@ void nicRxFillRFB(IN struct ADAPTER *prAdapter,
 			__func__);
 }
 
-/**
- * nicRxProcessRxv() - function to parse RXV for rate information
- * @prAdapter: pointer to adapter
- * @prSwRfb: RFB of received frame
- *
- * If parsed data will be saved in
- * prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector[*], then can be used
- * for calling wlanGetRxRate().
- */
-static void nicRxProcessRxv(IN struct ADAPTER *prAdapter,
-		IN struct SW_RFB *prSwRfb)
-{
-#if (CFG_SUPPORT_MSP == 1)
-	struct mt66xx_chip_info *prChipInfo;
-
-	prChipInfo = prAdapter->chip_info;
-
-	if (!prChipInfo || !prChipInfo->asicRxProcessRxvforMSP)
-		return;
-
-	prChipInfo->asicRxProcessRxvforMSP(prAdapter, prSwRfb);
-#endif /* CFG_SUPPORT_MSP == 1 */
-}
-
 #if CFG_TCP_IP_CHKSUM_OFFLOAD || CFG_TCP_IP_CHKSUM_OFFLOAD_NDIS_60
 /*----------------------------------------------------------------------------*/
 /*!
@@ -1873,10 +1849,9 @@ void nicRxPerfIndProcessRXV(IN struct ADAPTER *prAdapter,
 	struct mt66xx_chip_info *prChipInfo;
 
 	prChipInfo = prAdapter->chip_info;
-	if (!prChipInfo || !prChipInfo->asicRxPerfIndProcessRXV)
-		return;
-
-	prChipInfo->asicRxPerfIndProcessRXV(prAdapter, prSwRfb, ucBssIndex);
+	if (prChipInfo->asicRxPerfIndProcessRXV)
+		prChipInfo->asicRxPerfIndProcessRXV(
+			prAdapter, prSwRfb, ucBssIndex);
 	/* else { */
 		/* print too much, remove for system perfomance */
 		/* DBGLOG(RX, ERROR, "%s: no asicRxPerfIndProcessRXV ??\n", */
@@ -2061,13 +2036,12 @@ void nicRxIndicatePackets(IN struct ADAPTER *prAdapter,
 	prRetSwRfb = prSwRfbListHead;
 
 	while (prRetSwRfb) {
-		/**
-		 * Collect RXV information,
-		 * prAdapter->arStaRec[i].u4RxVector[*] updated.
-		 * wlanGetRxRate() can get new rate values
-		 */
-		nicRxProcessRxv(prAdapter, prRetSwRfb);
-
+#if (CFG_SUPPORT_MSP == 1)
+		/* collect RXV information */
+		if (prChipInfo->asicRxProcessRxvforMSP)
+			prChipInfo->asicRxProcessRxvforMSP(
+				prAdapter, prRetSwRfb);
+#endif /* CFG_SUPPORT_MSP == 1 */
 /* fos_change begin */
 #if CFG_SUPPORT_STAT_STATISTICS
 		nicRxGetNoiseLevelAndLastRate(prAdapter, prRetSwRfb);
@@ -3904,15 +3878,11 @@ void nicRxProcessRxReport(IN struct ADAPTER *prAdapter,
 	}
 
 	/* P-B-0[0:31] */
-	if (RX_RPT_GET_RXV_TYPE_PRXV1_VLD(prRxRpt)) {
+	if (RX_RPT_GET_RXV_TYPE_PRXV1_VLD(prRxRpt))
 		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector0 =
 			prRxRptBlkRxv->u4PRxv1[0];
-		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].fgPRXVValid = 1;
-	} else {
-		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].fgPRXVValid = 0;
-	}
-
-	prAdapter->arStaRec[prSwRfb->ucStaRecIdx].fgCRXVValid = 0;
+	else
+		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector0 = 0;
 
 #if (CFG_SUPPORT_CONNAC2X == 1)
 	if (RX_RPT_GET_RXV_TYPE_CRXV1_VLD(prRxRpt)) {
@@ -3928,8 +3898,16 @@ void nicRxProcessRxReport(IN struct ADAPTER *prAdapter,
 		/* C-B-3[0:31] */
 		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector4 =
 			prRxRptBlkRxv->u4CRxv1[6];
-
-		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].fgCRXVValid = 1;
+	} else {
+		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector1 =
+			0;
+		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector2 =
+			0;
+		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector3 =
+			0;
+		prAdapter->arStaRec[prSwRfb->ucStaRecIdx].u4RxVector4 =
+			0;
+		DBGLOG(RX, WARN, "RX_RPT C-RXV1 not valid!\n");
 	}
 #endif
 

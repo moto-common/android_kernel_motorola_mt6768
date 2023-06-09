@@ -95,8 +95,7 @@
 #if (CFG_SUPPORT_CONNINFRA == 1)
 #include "fw_log_wifi.h"
 #endif
-#include "mgmt/rlm_domain.h"
-#include "mot_config.h"
+
 /*******************************************************************************
  *                              C O N S T A N T S
  *******************************************************************************
@@ -265,9 +264,7 @@ static struct ieee80211_channel mtk_2ghz_channels[] = {
 	CHAN2G(11, 2462, 0),
 	CHAN2G(12, 2467, 0),
 	CHAN2G(13, 2472, 0),
-#ifdef WLAN_ENABLE_JP_CH14
 	CHAN2G(14, 2484, 0),
-#endif
 };
 
 #if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
@@ -758,7 +755,6 @@ static struct cfg80211_ops mtk_cfg_ops = {
 #endif /* CFG_SUPPORT_SCHED_SCAN */
 
 	.connect = mtk_cfg_connect,
-	.update_connect_params = mtk_cfg_update_connect_params,
 	.disconnect = mtk_cfg_disconnect,
 	.join_ibss = mtk_cfg_join_ibss,
 	.leave_ibss = mtk_cfg_leave_ibss,
@@ -2348,9 +2344,7 @@ static int wlanOpen(struct net_device *prDev)
 /*----------------------------------------------------------------------------*/
 static int wlanStop(struct net_device *prDev)
 {
-	uint32_t u4SetInfoLen = 0, rStatus;
 	struct GLUE_INFO *prGlueInfo = NULL;
-	uint8_t fgNeedAbortScan = FALSE;
 
 	GLUE_SPIN_LOCK_DECLARATION();
 
@@ -2358,11 +2352,8 @@ static int wlanStop(struct net_device *prDev)
 
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prDev));
 
-	if (!prGlueInfo) {
-		DBGLOG(INIT, WARN, "driver is not ready, prGlueInfo is NULL\n");
-	} else if (prGlueInfo->u4ReadyFlag == 0) {
-		DBGLOG(INIT, WARN, "driver is not ready, u4ReadyFlag = 0\n");
-		prGlueInfo->prScanRequest = NULL;
+	if ((!prGlueInfo) || (prGlueInfo->u4ReadyFlag == 0)) {
+		DBGLOG(INIT, WARN, "driver is not ready\n");
 	} else {
 		/* CFG80211 down, report to kernel directly and run normal
 		*  scan abort procedure
@@ -2371,19 +2362,11 @@ static int wlanStop(struct net_device *prDev)
 		if (prGlueInfo->prScanRequest) {
 			DBGLOG(INIT, INFO, "wlanStop abort scan!\n");
 			kalCfg80211ScanDone(prGlueInfo->prScanRequest, TRUE);
+			aisFsmStateAbort_SCAN(prGlueInfo->prAdapter,
+						wlanGetBssIdx(prDev));
 			prGlueInfo->prScanRequest = NULL;
-			fgNeedAbortScan = TRUE;
 		}
 		GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
-		if (fgNeedAbortScan) {
-			rStatus = kalIoctlByBssIdx(prGlueInfo,
-					wlanoidAbortScan,
-					NULL, 1, FALSE, FALSE, TRUE,
-					&u4SetInfoLen, wlanGetBssIdx(prDev));
-			if (rStatus != WLAN_STATUS_SUCCESS)
-				DBGLOG(REQ, ERROR,
-				"wlanoidAbortScan fail 0x%x\n", rStatus);
-		}
 	}
 
 	netif_tx_stop_all_queues(prDev);
@@ -2763,8 +2746,8 @@ static int32_t wlanNetRegister(struct wireless_dev *prWdev)
 			prNetDevPrivate->ucIsP2p = FALSE;
 #endif
 #if CFG_MTK_MDDP_SUPPORT
-			/* support both wlan0 and wlan1 */
-			prNetDevPrivate->ucMddpSupport = TRUE;
+			/* only wlan0 supports mddp */
+			prNetDevPrivate->ucMddpSupport = (u4Idx == 0);
 #else
 			prNetDevPrivate->ucMddpSupport = FALSE;
 #endif
@@ -3853,8 +3836,7 @@ void reset_p2p_mode(struct GLUE_INFO *prGlueInfo)
 			sizeof(struct PARAM_CUSTOM_P2P_SET_STRUCT),
 			FALSE, FALSE, TRUE, &u4BufLen);
 
-	if (rWlanStatus != WLAN_STATUS_SUCCESS)
-		p2pRemove(prGlueInfo);
+	prGlueInfo->prAdapter->fgIsP2PRegistered = FALSE;
 
 	DBGLOG(INIT, INFO,
 			"ret = 0x%08x\n", (uint32_t) rWlanStatus);
@@ -3960,8 +3942,6 @@ void wlanGetParseConfig(struct ADAPTER *prAdapter)
 {
 	uint8_t *pucConfigBuf;
 	uint32_t u4ConfigReadLen;
-	char motoConfigName[ARRAY_VALUE_MAX] = {0}; // IKSWR-130356
-	int motoRet = 1;// IKSWR-130356
 
 	wlanCfgInit(prAdapter, NULL, 0, 0);
 	pucConfigBuf = (uint8_t *) kalMemAlloc(
@@ -3969,18 +3949,6 @@ void wlanGetParseConfig(struct ADAPTER *prAdapter)
 	kalMemZero(pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE);
 	u4ConfigReadLen = 0;
 	if (pucConfigBuf) {
-		// IKSWR-130356
-		DBGLOG(INIT, ERROR, "wlanGetParseConfig.\n");
-		get_moto_config_file_name(motoConfigName, WIFI_CFG_INDEX);
-		if (strlen(motoConfigName)) {
-			motoRet = kalRequestFirmware(motoConfigName, pucConfigBuf,
-				WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen,
-				prAdapter->prGlueInfo->prDev);
-		}
-		// END IKSWR-130356
-		if (motoRet == 0) {
-			/* ToDo:: Nothing */
-		} else
 		if (kalRequestFirmware("wifi_sigma.cfg", pucConfigBuf,
 			   WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen,
 			   prAdapter->prGlueInfo->prDev) == 0) {
@@ -4017,27 +3985,12 @@ void wlanGetConfig(struct ADAPTER *prAdapter)
 	uint8_t *pucConfigBuf;
 	uint32_t u4ConfigReadLen;
 
-    char motoConfigName[ARRAY_VALUE_MAX] = {0}; // IKSWR-130356
-	int motoRet = 1;// IKSWR-130356
-
 	wlanCfgInit(prAdapter, NULL, 0, 0);
 	pucConfigBuf = (uint8_t *) kalMemAlloc(
 			       WLAN_CFG_FILE_BUF_SIZE, VIR_MEM_TYPE);
 	kalMemZero(pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE);
 	u4ConfigReadLen = 0;
 	if (pucConfigBuf) {
-		// IKSWR-130356
-		DBGLOG(INIT, ERROR, "wlanGetConfig\n");
-		get_moto_config_file_name(motoConfigName, 0);
-		if (strlen(motoConfigName)) {
-			motoRet = kalRequestFirmware(motoConfigName, pucConfigBuf,
-				WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen,
-				prAdapter->prGlueInfo->prDev);
-		}
-		// END IKSWR-130356
-		if (motoRet == 0) {
-			/* ToDo:: Nothing */
-		} else
 		if (kalRequestFirmware("wifi_sigma.cfg", pucConfigBuf,
 			   WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen,
 			   prAdapter->prGlueInfo->prDev) == 0) {
@@ -6291,6 +6244,8 @@ static void wlanRemove(void)
 	kalMetRemoveProcfs();
 #endif
 
+	kalWlanUeventDeinit();
+
 #if CFG_MET_TAG_SUPPORT
 	if (GL_MET_TAG_UNINIT() != 0)
 		DBGLOG(INIT, ERROR, "MET_TAG_UNINIT error!\n");
@@ -6303,8 +6258,6 @@ static void wlanRemove(void)
 #endif
 
 	wlanAdapterStop(prAdapter, FALSE);
-
-	kalWlanUeventDeinit();
 
 	HAL_LP_OWN_SET(prAdapter, &fgResult);
 	DBGLOG(INIT, INFO, "HAL_LP_OWN_SET(%d)\n",

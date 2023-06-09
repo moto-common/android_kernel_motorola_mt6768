@@ -314,7 +314,7 @@ void statsParseARPInfo(struct sk_buff *skb,
 	case EVENT_RX:
 		GLUE_SET_INDEPENDENT_PKT(skb, TRUE);
 		if (u2OpCode == ARP_PRO_REQ)
-			DBGLOG(RX, INFO,
+			DBGLOG_LIMITED(RX, INFO,
 				"<RX> Arp Req From IP: " IPV4STR "\n",
 				IPV4TOSTR(&pucEthBody[ARP_SENDER_IP_OFFSET]));
 		else if (u2OpCode == ARP_PRO_RSP)
@@ -601,11 +601,11 @@ static void statsParsePktInfo(uint8_t *pucPkt, struct sk_buff *skb,
 				/*143 multi listener report v2*/
 				GLUE_SET_INDEPENDENT_PKT(skb, TRUE);
 
-				DBGLOG_LIMITED(RX, INFO,
+				DBGLOG(RX, INFO,
 					"<RX><IPv6> hop-by-hop packet\n");
 				break;
 			case EVENT_TX:
-				DBGLOG_LIMITED(TX, INFO,
+				DBGLOG(TX, INFO,
 					"<TX><IPv6> hop-by-hop packet\n");
 				break;
 			}

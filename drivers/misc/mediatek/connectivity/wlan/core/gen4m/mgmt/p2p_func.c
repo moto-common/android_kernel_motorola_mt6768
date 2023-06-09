@@ -1319,7 +1319,6 @@ void p2pFuncStopComplete(IN struct ADAPTER *prAdapter,
 		/* Reset current OPMode */
 		prP2pBssInfo->eCurrentOPMode = OP_MODE_INFRASTRUCTURE;
 		prP2pBssInfo->u4RsnSelectedAKMSuite = 0;
-		prP2pBssInfo->fgBcDefaultKeyExist = FALSE;
 
 		/* Point StaRecOfAP to NULL when GC role stop Complete */
 		prP2pBssInfo->prStaRecOfAP = NULL;
@@ -7613,11 +7612,6 @@ void p2pFunProcessAcsReport(IN struct ADAPTER *prAdapter,
 		 */
 		prAcsReqInfo->u4LteSafeChnMask_2G &= 0x0842;
 #elif CFG_TC10_FEATURE
-		/* Restrict 2.4G band channel selection range
-		 * to 1~11 per customer's request
-		 */
-		prAcsReqInfo->u4LteSafeChnMask_2G &= 0x0FFE;
-#elif CFG_MOT_REM_CH12_CH13
 		/* Restrict 2.4G band channel selection range
 		 * to 1~11 per customer's request
 		 */

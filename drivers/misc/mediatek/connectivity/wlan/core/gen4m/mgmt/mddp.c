@@ -434,7 +434,6 @@ int32_t mddpNotifyDrvTxd(IN struct ADAPTER *prAdapter,
 #endif
 
 	if (!prNetDevPrivate->ucMddpSupport) {
-		DBGLOG(NIC, ERROR, "mddp not support\n");
 		goto exit;
 	}
 

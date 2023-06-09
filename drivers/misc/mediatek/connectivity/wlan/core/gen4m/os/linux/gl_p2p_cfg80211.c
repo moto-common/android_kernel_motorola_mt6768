@@ -547,8 +547,6 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 #if 1
 	struct cfg80211_scan_request *prScanRequest = NULL;
 #endif
-	int32_t i4Ret = WLAN_STATUS_SUCCESS;
-	uint8_t fgDoDelIface = FALSE;
 
 	GLUE_SPIN_LOCK_DECLARATION();
 
@@ -562,23 +560,6 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	prAdapter = prGlueInfo->prAdapter;
 	prP2pGlueDevInfo = prGlueInfo->prP2PDevInfo;
 
-	/* Both p2p and p2p net device should be in registered state */
-	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
-	if (prAdapter->rP2PNetRegState == ENUM_NET_REG_STATE_REGISTERED &&
-		prAdapter->rP2PRegState == ENUM_P2P_REG_STATE_REGISTERED) {
-		prAdapter->rP2PNetRegState = ENUM_NET_REG_STATE_REGISTERING;
-		fgDoDelIface = TRUE;
-	}
-	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
-
-	if (!fgDoDelIface) {
-		DBGLOG(P2P, ERROR,
-			"skip del_iface, p2p_state=%d, net_state=%d\n",
-			prAdapter->rP2PRegState,
-			prAdapter->rP2PNetRegState);
-		return -EBUSY;
-	}
-
 	KAL_ACQUIRE_MUTEX(prAdapter, MUTEX_DEL_INF);
 
 	for (u4Idx = 0; u4Idx < KAL_P2P_NUM; u4Idx++) {
@@ -591,14 +572,13 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	}
 	if (u4Idx == KAL_P2P_NUM) {
 		DBGLOG(INIT, WARN, "can't find the matched dev\n");
-		i4Ret = -EINVAL;
-		goto error;
+		return -EINVAL;
 	}
 
 	prP2pRoleFsmInfo = prAdapter->rWifiVar.aprP2pRoleFsmInfo[u4Idx];
 	if (prP2pRoleFsmInfo == NULL) {
-		i4Ret = -EINVAL;
-		goto error;
+		KAL_RELEASE_MUTEX(prAdapter, MUTEX_DEL_INF);
+		return -EINVAL;
 	}
 
 	ucBssIdx = prP2pRoleFsmInfo->ucBssIndex;
@@ -621,6 +601,7 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	}
 
 	/* Wait for kalSendCompleteAndAwakeQueue() complete */
+	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 	prP2pInfo->aprRoleHandler = prP2pInfo->prDevHandler;
 	/* Restore */
 	prP2pInfo->prWdev = gprP2pWdev[u4Idx];
@@ -654,6 +635,7 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 		}
 	}
 #endif
+	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 
 	/* prepare for removal */
 	if (netif_carrier_ok(UnregRoleHander))
@@ -666,35 +648,25 @@ int mtk_p2p_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	/* free is called at destructor */
 	/* free_netdev(UnregRoleHander); */
 
-error:
 	KAL_RELEASE_MUTEX(prAdapter, MUTEX_DEL_INF);
 
+	prP2pDelIfaceMsg = (struct MSG_P2P_DEL_IFACE *)
+		cnmMemAlloc(prGlueInfo->prAdapter, RAM_TYPE_MSG,
+			sizeof(struct MSG_P2P_DEL_IFACE));
 
-	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
-	prAdapter->rP2PNetRegState = ENUM_NET_REG_STATE_REGISTERED;
-	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
+	if (prP2pDelIfaceMsg == NULL) {
+		DBGLOG(INIT, WARN, "unable to alloc msg\n");
+	} else {
+		prP2pDelIfaceMsg->rMsgHdr.eMsgId = MID_MNY_P2P_DEL_IFACE;
+		prP2pDelIfaceMsg->ucRoleIdx = u4Idx;
 
-	if (i4Ret == WLAN_STATUS_SUCCESS) {
-		prP2pDelIfaceMsg = (struct MSG_P2P_DEL_IFACE *)
-			cnmMemAlloc(prGlueInfo->prAdapter, RAM_TYPE_MSG,
-				sizeof(struct MSG_P2P_DEL_IFACE));
-
-		if (prP2pDelIfaceMsg == NULL) {
-			DBGLOG(INIT, WARN, "unable to alloc msg\n");
-		} else {
-			prP2pDelIfaceMsg->rMsgHdr.eMsgId =
-				MID_MNY_P2P_DEL_IFACE;
-			prP2pDelIfaceMsg->ucRoleIdx = u4Idx;
-
-			mboxSendMsg(prGlueInfo->prAdapter,
-				MBOX_ID_0,
-				(struct MSG_HDR *) prP2pDelIfaceMsg,
-				MSG_SEND_METHOD_BUF);
-		}
+		mboxSendMsg(prGlueInfo->prAdapter,
+			MBOX_ID_0,
+			(struct MSG_HDR *) prP2pDelIfaceMsg,
+			MSG_SEND_METHOD_BUF);
 	}
-
-	return i4Ret;
 #endif
+	return 0;
 }				/* mtk_p2p_cfg80211_del_iface */
 
 int mtk_p2p_cfg80211_add_key(struct wiphy *wiphy,
@@ -2830,8 +2802,6 @@ int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy,
 	uint8_t ucBssIdx = 0;
 	uint32_t waitRet = 0;
 	struct BSS_INFO *prBssInfo = NULL;
-	struct STA_RECORD *prCurrStaRec =
-		(struct STA_RECORD *) NULL;
 
 	do {
 		if ((wiphy == NULL) || (dev == NULL))
@@ -2874,9 +2844,6 @@ int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy,
 			GET_BSS_INFO_BY_INDEX(
 			prGlueInfo->prAdapter,
 			ucBssIdx);
-		prCurrStaRec = bssGetClientByMac(prGlueInfo->prAdapter,
-			prBssInfo,
-			prDisconnectMsg->aucTargetID);
 
 		mboxSendMsg(prGlueInfo->prAdapter,
 			MBOX_ID_0,
@@ -2886,13 +2853,11 @@ int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy,
 		/* if encrypted deauth frame
 		 * is in process, pending remove key
 		*/
-		if (prBssInfo && prCurrStaRec &&
+		if (prBssInfo &&
 			IS_BSS_APGO(prBssInfo) &&
 			(prBssInfo->u4RsnSelectedAKMSuite ==
 			RSN_AKM_SUITE_SAE)) {
 			reinit_completion(&prBssInfo->rDeauthComp);
-			DBGLOG(P2P, TRACE,
-				"Start deauth wait\n");
 			waitRet = wait_for_completion_timeout(
 				&prBssInfo->rDeauthComp,
 				MSEC_TO_JIFFIES(1000));
