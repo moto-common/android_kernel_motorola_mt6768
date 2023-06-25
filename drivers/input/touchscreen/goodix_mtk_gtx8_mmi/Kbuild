@@ -1,0 +1,22 @@
+ifeq ($(CONFIG_GOODIX_FB_PANEL),y)
+	EXTRA_CFLAGS += -DGOODIX_FB_PANEL_EN
+endif
+
+ifeq ($(CONFIG_GOODIX_CHG_DETECTION),y)
+	EXTRA_CFLAGS += -DGOODIX_CHG_DETECT_EN
+endif
+
+obj-$(CONFIG_GOODIX_MTK_GTX8_MMI) := goodix_mtk_gtx8_mmi.o
+goodix_mtk_gtx8_mmi-objs = goodix_ts_i2c.o goodix_ts_core.o goodix_ts_test.o goodix_cfg_bin.o goodix_gtx8_update.o
+//goodix_mtk_gtx8_mmi-objs = goodix_ts_i2c.o goodix_ts_core.o goodix_ts_test.o goodix_cfg_bin.o goodix_gtx8_update.o goodix_ts_tools.o goodix_ts_gesture.o
+
+obj-$(CONFIG_GOODIX_MTK_GTX8_TS_TOOLS_MMI) += goodix_mtk_gtx8_ts_tools_mmi.o
+goodix_mtk_gtx8_ts_tools_mmi-objs = goodix_ts_tools.o
+
+ifeq ($(CONFIG_INPUT_GTX_MTK_MMI_ENABLE_DOUBLE_TAP),y)
+	EXTRA_CFLAGS += -DGOODIX_SENSOR_EN
+
+obj-$(CONFIG_GOODIX_MTK_GTX8_GESTURE_MMI) += goodix_mtk_gtx8_gesture_mmi.o
+goodix_mtk_gtx8_gesture_mmi-objs = goodix_ts_gesture.o
+endif
+

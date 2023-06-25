@@ -1368,4 +1368,8 @@ config TOUCHSCREEN_MTK_TOUCH
 
 	  To compile this dirver for used touch IC.
 
+source "drivers/input/touchscreen/focaltech_mtk_v2_mmi/Kconfig"
+
+source "drivers/input/touchscreen/goodix_mtk_gtx8_mmi/Kconfig"
+
 endif

@@ -1458,4 +1458,6 @@ config SND_SOC_AW883XX
     help
       This option enables support for aw883xx series Smart PA.
 
+source "sound/soc/codecs/fs16xx_dlkm/Kconfig"
+
 endmenu

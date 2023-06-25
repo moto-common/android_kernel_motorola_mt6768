@@ -1,0 +1,51 @@
+#
+# Focaltech Touchscreen driver configuration
+#
+
+config TOUCHSCREEN_FTS_MTK_V2_MMI
+	tristate "Moto Focaltech Touchscreen"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have Moto Focaltech touch panel.
+	  If unsure, say N.
+
+config INPUT_FOCALTECH_MTK_V2_MMI_IC_NAME_FT3518U
+	bool "Focaltech Chip FT3518U"
+	depends on TOUCHSCREEN_FTS_MTK_V2_MMI
+	default n
+	help
+	  Say Y here to enable support for Focaltech FT3518U touch panel.
+	  If unsure, say N.
+
+config INPUT_FOCALTECH_MTK_V2_MMI_IC_NAME_FT3519
+	bool "Focaltech Chip FT3519"
+	depends on TOUCHSCREEN_FTS_MTK_V2_MMI
+	default n
+	help
+	  Say Y here to enable support for Focaltech FT3519 touch panel.
+	  If unsure, say N.
+
+config INPUT_FOCALTECH_MTK_V2_MMI_ENABLE_DOUBLE_TAP
+	bool "Moto Focaltech Double tap"
+	depends on TOUCHSCREEN_FTS_MTK_V2_MMI
+	default n
+	help
+	  Say Y here to enable support for double tap functionality on Focaltech touch panel.
+	  If unsure, say N.
+
+config FOCALTECH_FB_PANEL
+	bool "Focaltech FB Panel"
+	depends on TOUCHSCREEN_FTS_MTK_V2_MMI
+	default n
+	help
+	  Say Y here to enable support for Focaltech FB Panel.
+	  If unsure, say N.
+
+config INPUT_FOCALTECH_POWER_RECOVER_EN
+	bool "Moto Focaltech Power Recovery"
+	depends on TOUCHSCREEN_FTS_MTK_V2_MMI
+	default n
+	help
+	  Say Y here to enable support for power recovery on Focaltech touch panel.
+	  If unsure, say N.

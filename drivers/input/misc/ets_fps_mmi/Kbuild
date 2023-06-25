@@ -1,0 +1,8 @@
+ARCH_MTK_PROJECT := $(subst ",,$(CONFIG_ARCH_MOTO_PROJECT))
+ifneq (,$(findstring corfu,$(ARCH_MTK_PROJECT)))
+EXTRA_CFLAGS += -DEGIS_SHARE_GPIO
+endif
+
+ets_fps-y += etxxx_fp.o
+
+obj-$(CONFIG_INPUT_EGISTEC_FPS) += ets_fps.o

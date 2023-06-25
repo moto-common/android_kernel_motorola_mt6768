@@ -19,7 +19,6 @@
 #include <linux/err.h>
 #include <linux/cpufreq.h>
 #include <cpu_ctrl.h>
-#include <sched_ctl.h>
 
 #define CLUSTER_NUM 2
 #define LITTLE 0
@@ -32,7 +31,7 @@ __ATTR(_name, 0644, show_##_name, store_##_name)
 /* cpu frequency table from cpufreq dt parse */
 static struct cpufreq_frequency_table* cpuftbl[2];
 
-static struct ppm_limit_data *current_cpu_freq;
+static struct cpu_ctrl_data *current_cpu_freq;
 
 extern int set_sched_boost(unsigned int val);
 
@@ -47,6 +46,13 @@ struct cpufreq_mtk_topo_config {
 static const struct cpufreq_mtk_topo_config topology = {
     .ltl_cpu_start			= 0,
     .big_cpu_start			= 6,
+};
+#endif
+
+#if defined(CONFIG_MACH_MT6765)
+static const struct cpufreq_mtk_topo_config topology = {
+    .ltl_cpu_start			= 0,
+    .big_cpu_start			= 4,
 };
 #endif
 
@@ -264,7 +270,7 @@ static int __init cpufreq_mtk_init(void)
 {
     int ret;
 
-    current_cpu_freq = kcalloc(CLUSTER_NUM, sizeof(struct ppm_limit_data), GFP_KERNEL);
+    current_cpu_freq = kcalloc(CLUSTER_NUM, sizeof(struct cpu_ctrl_data), GFP_KERNEL);
 
     if (!current_cpu_freq) {
         pr_err("[%s] Could not allocate memory for current_cpu_freq!\n", __func__);

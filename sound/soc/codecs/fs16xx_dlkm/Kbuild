@@ -1,0 +1,3 @@
+# add -Wall to try to catch everything we can.
+fs16xx_dlkm-objs = fs1603.o fsm_codec.o fsm_core.o fsm_firmware.o fsm_i2c.o fsm_misc.o
+obj-$(CONFIG_SND_SOC_FS16XX_DLKM) += fs16xx_dlkm.o

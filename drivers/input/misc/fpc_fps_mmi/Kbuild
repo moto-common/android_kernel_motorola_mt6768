@@ -1,0 +1,3 @@
+fpc_mtk_tee-y += fpc_tee_spi.o
+
+obj-$(CONFIG_INPUT_MISC_FPC1020) += fpc_mtk_tee.o

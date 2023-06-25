@@ -1,0 +1,47 @@
+config GOODIX_MTK_GTX8_MMI
+	tristate "Goodix MTK GTX8 MMI"
+	depends on I2C && SENSORS_CLASS
+	default n
+	help
+	  Say Y here to build the Goodix MTK GTX8 MMI driver as a module.
+	  If unsure, say N.
+
+config GOODIX_MTK_GTX8_TS_TOOLS_MMI
+	tristate "Goodix MTK GTX8 TS Tools MMI"
+	depends on I2C && GOODIX_MTK_GTX8_MMI
+	default n
+	help
+	  Say Y here to build the Goodix MTK GTX8 TS Tools MMI driver as a module.
+	  If unsure, say N.
+
+config GOODIX_MTK_GTX8_GESTURE_MMI
+	tristate "Goodix MTK GTX8 Gesture MMI"
+	depends on I2C && GOODIX_MTK_GTX8_MMI
+	default n
+	help
+	  Say Y here to build the Goodix MTK GTX8 Gesture MMI driver as a module.
+	  If unsure, say N.
+
+config GOODIX_FB_PANEL
+	bool "Goodix FB Panel"
+	depends on GOODIX_MTK_GTX8_MMI
+	default n
+	help
+	  Say Y here to enable support for Goodix FB Panel.
+	  If unsure, say N.
+
+config GOODIX_CHG_DETECTION
+	bool "Goodix Charger Detection"
+	depends on GOODIX_MTK_GTX8_MMI
+	default n
+	help
+	  Say Y here to enable support for Goodix Charger Detection.
+	  If unsure, say N.
+
+config INPUT_GTX_MTK_MMI_ENABLE_DOUBLE_TAP
+	bool "Goodix Double Tap"
+	depends on GOODIX_MTK_GTX8_MMI
+	default n
+	help
+	  Say Y here to enable support for double tap functionality on Goodix touch panel.
+	  If unsure, say N.

@@ -1,0 +1,8 @@
+config ST21NFC
+	tristate "ST21NFC Support"
+	depends on I2C
+	default n
+	help
+	  Say Y here to enable support for ST21NFC.
+
+
